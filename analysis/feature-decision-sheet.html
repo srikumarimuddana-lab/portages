@@ -1,0 +1,536 @@
+<title>Portage Feature Decisions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #f7f8fb;
+    --surface: #ffffff;
+    --surface-2: #eef1f7;
+    --ink: #101216;
+    --ink-2: #3d4351;
+    --ink-3: #6b7280;
+    --line: #dfe3ec;
+    --line-strong: #c3cad9;
+    --accent: #356dbe;
+    --accent-soft: #e7eefa;
+    --on-accent: #ffffff;
+    --keep: #1d7a4f;
+    --keep-soft: #e2f3ea;
+    --drop: #a33a4e;
+    --drop-soft: #f8e6ea;
+    --warn: #8a5a09;
+    --warn-soft: #fdf1dc;
+    --shadow: 0 1px 2px rgba(16,18,22,.06), 0 8px 24px -12px rgba(16,18,22,.18);
+    --display: "Newsreader", Georgia, "Times New Roman", serif;
+    --sans: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0e1015;
+      --surface: #161a21;
+      --surface-2: #1e232c;
+      --ink: #eef1f6;
+      --ink-2: #b9c0cc;
+      --ink-3: #8b93a1;
+      --line: #2a303b;
+      --line-strong: #3b434f;
+      --accent: #7ba7e8;
+      --accent-soft: #1c2942;
+      --on-accent: #0e1015;
+      --keep: #5fc793;
+      --keep-soft: #14301f;
+      --drop: #e78b9e;
+      --drop-soft: #33161e;
+      --warn: #e0b166;
+      --warn-soft: #322512;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0e1015;
+    --surface: #161a21;
+    --surface-2: #1e232c;
+    --ink: #eef1f6;
+    --ink-2: #b9c0cc;
+    --ink-3: #8b93a1;
+    --line: #2a303b;
+    --line-strong: #3b434f;
+    --accent: #7ba7e8;
+    --accent-soft: #1c2942;
+    --on-accent: #0e1015;
+    --keep: #5fc793;
+    --keep-soft: #14301f;
+    --drop: #e78b9e;
+    --drop-soft: #33161e;
+    --warn: #e0b166;
+    --warn-soft: #322512;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* ---------- masthead ---------- */
+  header.mast {
+    display: flex; flex-direction: column; gap: 18px;
+    padding: 44px 0 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand .word {
+    font-family: var(--display); font-size: 20px; font-weight: 600;
+    letter-spacing: .01em;
+  }
+  .brand .word i { color: var(--accent); font-style: normal; }
+  .brand .kicker {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  h1 {
+    font-family: var(--display); font-weight: 500;
+    font-size: clamp(30px, 4.6vw, 46px); line-height: 1.1;
+    margin: 0; text-wrap: balance; letter-spacing: -.015em;
+  }
+  .lede {
+    margin: 0; max-width: 62ch; color: var(--ink-2); font-size: 16px;
+  }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- console ---------- */
+  .console {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--ground) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+    margin: 0 -24px; padding: 12px 24px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  }
+  .tally { display: flex; gap: 14px; align-items: center; }
+  .tally .unit { display: flex; align-items: baseline; gap: 6px; }
+  .tally .n {
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    font-size: 19px; font-weight: 600;
+  }
+  .tally .n.keep { color: var(--keep); }
+  .tally .n.drop { color: var(--drop); }
+  .tally .lab {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  .meter {
+    flex: 1 1 140px; min-width: 120px; height: 6px; border-radius: 99px;
+    background: var(--surface-2); overflow: hidden; display: flex;
+  }
+  .meter i { display: block; height: 100%; transition: width .25s ease; }
+  .meter .mk { background: var(--keep); }
+  .meter .md { background: var(--drop); }
+  .console .spacer { flex: 1 1 auto; }
+  button {
+    font-family: var(--sans); font-size: 13px; font-weight: 500;
+    color: var(--ink); background: var(--surface);
+    border: 1px solid var(--line-strong); border-radius: 7px;
+    padding: 6px 11px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- filters ---------- */
+  .filters {
+    display: flex; flex-wrap: wrap; gap: 7px;
+    padding: 20px 0 6px;
+  }
+  .chip {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
+    padding: 5px 10px; border-radius: 99px;
+    border: 1px solid var(--line-strong); background: var(--surface);
+    color: var(--ink-2); cursor: pointer;
+  }
+  .chip[aria-pressed="true"] {
+    background: var(--accent); border-color: var(--accent);
+    color: var(--on-accent);
+  }
+
+  /* ---------- sections ---------- */
+  section.grp { margin-top: 34px; }
+  .grp-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .grp-head h2 {
+    font-family: var(--display); font-weight: 600; font-size: 21px;
+    margin: 0; letter-spacing: -.01em;
+  }
+  .grp-head .tag {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--accent);
+    background: var(--accent-soft); padding: 3px 8px; border-radius: 4px;
+  }
+  .grp-note { margin: 0 0 14px; color: var(--ink-3); font-size: 14px; max-width: 68ch; }
+
+  .rows { display: flex; flex-direction: column; gap: 8px; }
+
+  .row {
+    display: grid;
+    grid-template-columns: 54px minmax(0,1fr) auto;
+    gap: 0 16px; align-items: start;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 13px 15px; box-shadow: var(--shadow);
+    border-left: 3px solid var(--line-strong);
+  }
+  .row[data-state="keep"] { border-left-color: var(--keep); background: color-mix(in srgb, var(--keep-soft) 34%, var(--surface)); }
+  .row[data-state="drop"] { border-left-color: var(--drop); opacity: .58; }
+  .row.exists { border-left-color: var(--accent); }
+
+  .fid {
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    color: var(--accent); padding-top: 2px;
+  }
+  .body .name { font-weight: 600; font-size: 15px; line-height: 1.35; }
+  .body .name .flagx {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
+    padding: 2px 5px; border-radius: 3px; margin-left: 7px;
+    vertical-align: 2px; font-weight: 600; white-space: nowrap;
+  }
+  .fx-rev { background: var(--keep-soft); color: var(--keep); }
+  .fx-ret { background: var(--accent-soft); color: var(--accent); }
+  .fx-tru { background: var(--warn-soft); color: var(--warn); }
+  .body .why { margin: 5px 0 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
+  .body .why a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .body .meta {
+    margin-top: 7px; display: flex; flex-wrap: wrap; gap: 6px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  .body .meta span { border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+  .warnbox {
+    margin-top: 8px; padding: 8px 11px; border-radius: 7px;
+    background: var(--warn-soft); color: var(--warn);
+    font-size: 13px; line-height: 1.45; border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+  }
+  .warnbox a { color: inherit; }
+
+  .choice { display: flex; gap: 5px; padding-top: 1px; }
+  .choice button {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+    padding: 5px 9px; min-width: 56px;
+  }
+  .choice button[aria-pressed="true"][data-v="keep"] {
+    background: var(--keep); border-color: var(--keep); color: var(--surface);
+  }
+  .choice button[aria-pressed="true"][data-v="drop"] {
+    background: var(--drop); border-color: var(--drop); color: var(--surface);
+  }
+
+  /* ---------- summary ---------- */
+  .summary {
+    margin-top: 40px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 20px; box-shadow: var(--shadow);
+  }
+  .summary h2 { font-family: var(--display); font-size: 20px; margin: 0 0 6px; font-weight: 600; }
+  .summary p { margin: 0 0 14px; color: var(--ink-3); font-size: 14px; }
+  #out {
+    width: 100%; min-height: 190px; resize: vertical;
+    font-family: var(--mono); font-size: 12px; line-height: 1.6;
+    background: var(--surface-2); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+  }
+  footer {
+    margin-top: 42px; padding-top: 18px; border-top: 1px solid var(--line);
+    color: var(--ink-3); font-size: 13px; max-width: 70ch;
+  }
+  footer a { color: var(--accent); }
+  .hidden { display: none !important; }
+  @media (max-width: 720px) {
+    .row { grid-template-columns: 44px minmax(0,1fr); }
+    .choice { grid-column: 1 / -1; padding-top: 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <div class="brand">
+      <span class="word">PORTAGE<i>.</i></span>
+      <span class="kicker">Regina launch · decision sheet</span>
+    </div>
+    <h1>Which features make the build?</h1>
+    <p class="lede">Every candidate feature from the design prototype and from five research streams benchmarking <b>Canadian, US and Indian</b> marketplaces. Mark each one <b>Keep</b> or <b>Cut</b>, then copy the summary at the bottom. Choices save in this browser.</p>
+  </header>
+
+  <div class="console">
+    <div class="tally">
+      <span class="unit"><span class="n keep" id="nk">0</span><span class="lab">keep</span></span>
+      <span class="unit"><span class="n drop" id="nd">0</span><span class="lab">cut</span></span>
+      <span class="unit"><span class="n" id="nu">0</span><span class="lab">open</span></span>
+    </div>
+    <div class="meter"><i class="mk" id="mk" style="width:0"></i><i class="md" id="md" style="width:0"></i></div>
+    <span class="spacer"></span>
+    <button id="mvp">Preselect MVP</button>
+    <button id="clear">Reset</button>
+  </div>
+
+  <div class="filters" id="filters"></div>
+  <div id="board"></div>
+
+  <div class="summary">
+    <h2>Your decisions</h2>
+    <p>Paste this back into the conversation and I'll rebuild the roadmap around it.</p>
+    <textarea id="out" readonly spellcheck="false"></textarea>
+  </div>
+
+  <footer>
+    Compiled 28 Aug 2026 from five parallel research streams. Every claim is sourced in the repo under <code>analysis/</code>; unverifiable items are labelled there. Regulatory notes are research, not legal advice — retain Saskatchewan counsel before launch.
+  </footer>
+</div>
+
+<script>
+const DATA = [
+  { id:"A", title:"Already in your design", tag:"validate", note:"These exist in the prototype. The decision here is whether research supports keeping them, not whether to build them.", items:[
+    {i:"A1", n:"Buy / Rent / Sell modes, free for everyone", w:"Novel bundle in Canada — no single competitor does owner-direct sales <em>and</em> rentals, zero-fee, AI-native, in Regina.", m:["exists"], d:"keep"},
+    {i:"A2", n:"Map / list / grid search + filters", w:"Table stakes.", m:["exists"], d:"keep"},
+    {i:"A3", n:"Room-type filter — entire / private / shared", w:"<b>Validated.</b> SpacesShared already runs room-sharing in Saskatchewan with 10,000+ users via college partnerships.", m:["exists"], d:"keep"},
+    {i:"A4", n:"Saved searches + alerts", w:"Table stakes — but CASL requires express opt-in, unchecked by default, with sender ID and unsubscribe on every message.", m:["exists"], d:"keep"},
+    {i:"A5", n:"AI chat search (natural language → filters)", w:"On-trend but <b>will be commoditized</b>: Zillow shipped it in 2023, <a href=\"https://www.housingwire.com/articles/realtor-com-launches-ai-powered-home-search-tool/\">Realtor.com in Oct 2025</a>, RealAssist AI in Jun 2026. Ship fast; don't treat it as a moat.", m:["exists"], d:"keep"},
+    {i:"A6", n:"AI listing builder by chat", w:"Genuinely rare. Strong differentiator for owners who won't fill in a 20-field form.", m:["exists"], d:"keep"},
+    {i:"A7", n:"AI price suggestion", w:"Keep — but see the trading-line warning on bespoke pricing advice in doc 05.", m:["exists"], d:"keep"},
+    {i:"A8", n:"AVM — the “Portage estimate”", w:"<b>Table stakes, not a moat.</b> <a href=\"https://www.businesswire.com/news/home/20220622005039/en/HonestDoor-Launches-Free-Home-Valuations-for-Residential-Properties-Across-Canada\">HonestDoor</a> has given free national AVMs incl. Saskatchewan since 2022.", m:["exists"], d:"keep", warn:"Must be labelled “estimate, not an appraisal.” An AVM a consumer relies on is a representation by Portage under Competition Act s.74.01."},
+    {i:"A9", n:"AI listing descriptions", w:"Keep, with mandatory owner review and a factual-claims attestation before publish.", m:["exists"], d:"keep"},
+    {i:"A10", n:"Mortgage calculator + rent-vs-buy", w:"Keep — this becomes the funnel into the mortgage-broker directory (F2).", m:["exists"], d:"keep"},
+    {i:"A11", n:"Neighbourhood scores from open data", w:"Keep. Differentiate on <b>Regina</b> depth — HouseSigma's FAQ says it has no ETA for Saskatchewan.", m:["exists"], d:"keep"},
+    {i:"A12", n:"Price history", w:"Keep, but sold-price data access is restricted in Canada. Don't over-promise depth in the UI.", m:["exists"], d:"keep"},
+    {i:"A13", n:"3D virtual tour", w:"Keep — natural upgrade path into a paid media SKU (C1).", m:["exists"], d:"keep"},
+    {i:"A14", n:"Verified-owner ID validation", w:"<b>The strongest feature in the design.</b> FCAA, the Saskatchewan REALTORS® Association, the Saskatchewan Landlord Association and BBB have all issued fake-listing warnings; the Canadian Anti-Fraud Centre logged $638M in reported losses in 2024.", m:["exists"], f:["tru"], d:"keep"},
+    {i:"A15", n:"Owner-direct chat with photos, docs, voice notes", w:"Keep.", m:["exists"], d:"keep"},
+    {i:"A16", n:"Viewing bookings", w:"Keep — but keep it <b>tool-like</b>. The owner controls the calendar; staff scheduling on a seller's behalf risks the “showing of real estate” limb of Saskatchewan's trading definition.", m:["exists"], d:"keep"},
+    {i:"A17", n:"Saved homes + compare table", w:"Keep — genuinely good, and rare among Canadian portals.", m:["exists"], d:"keep"},
+    {i:"A18", n:"My-listings analytics (views / saves / messages)", w:"Keep, and extend with benchmarking (C6).", m:["exists"], d:"keep"},
+    {i:"A19", n:"Home-services marketplace", w:"Keep — <b>this is your primary revenue engine</b>, but restructure per E1–E5.", m:["exists"], f:["rev"], d:"keep"},
+    {i:"A20", n:"Admin moderation, automated checks, reports queue", w:"Keep and supercharge with B1 / B2.", m:["exists"], f:["tru"], d:"keep"},
+    {i:"A21", n:"Add Regina to the city list", w:"Your design's city chips list Toronto, Vancouver, Montréal, Calgary, Ottawa, Halifax and Winnipeg. <b>Regina — the launch city — is missing.</b>", m:["S","mvp"], d:"keep"}
+  ]},
+  { id:"B", title:"Trust & anti-fraud", tag:"highest value", note:"Free is not differentiating in rentals — Kijiji and Facebook are already free. Verified is.", items:[
+    {i:"B1", n:"“Broker Buster” AI — detect agents and scammers posing as owners", w:"Repeat phone / email / IP, portfolio-size heuristics, reverse-image photo matching. NoBroker enforces owner-only supply architecturally rather than as a marketing claim.", m:["M","mvp"], f:["tru"]},
+    {i:"B2", n:"100% AI conversation auditing + auto-delist", w:"NoBroker's <a href=\"https://www.business-standard.com/content/press-releases-ani/nobroker-unveils-convozen-ai-a-comprehensive-conversational-ai-cloud-for-the-agentic-era-125022800864_1.html\">ConvoZen</a> is trained on 45,000+ hours of its own calls, claims 100% audit coverage vs ~2% human sampling, and auto-delists a property in real time when it detects it's already rented.", m:["M","mvp"], f:["tru","ret"]},
+    {i:"B3", n:"Verified-owner badge + public scam-safety page", w:"Explain exactly what was verified, plus “never e-transfer before a viewing.” The <a href=\"https://search.ftc.gov/system/files/ftc_gov/pdf/rental-scams-spotlight-2025.pdf\">FTC found about half of US rental-scam reports</a> started with a fake Facebook ad.", m:["S","mvp"], f:["tru"]},
+    {i:"B4", n:"“Your listing, your lead” written promise", w:"Every inquiry goes only to that owner — never resold, never diverted. <a href=\"https://www.homes.com/solutions/yourlistingyourlead\">Homes.com</a> took brand awareness from 4% to 33% in a year on this principle. For you it's native and free.", m:["S","mvp"], f:["tru"]},
+    {i:"B5", n:"Verified-resident reviews of buildings and landlords", w:"Only lease-verified tenants can review. Adapted from MyGate's staff-ratings layer — unique data no MLS portal has.", m:["M","v2"], f:["tru","ret"]},
+    {i:"B6", n:"Neighbourhood UGC polls", w:"“Safe at night?”, “walkable?”, “quiet?” — modelled on <a href=\"https://www.trulia.com/neighborhoods/\">Trulia's “What Locals Say”</a>, millions of resident reviews.", m:["M","v2"], f:["ret"]},
+    {i:"B7", n:"Tenant screening as an optional referral", w:"SingleKey (~$29.99) or Certn, landlord-paid or as a tenant-controlled portable profile. Zillow's US equivalent is $35 for 30 days of unlimited applications.", m:["M","v2"], f:["rev"], warn:"Saskatchewan trap: the Residential Tenancies Act says a landlord “must not charge a person for accepting an application… processing an application… investigating an applicant's suitability.” Charging tenants would likely be attacked as doing indirectly what landlords cannot do directly. This kills the #1 US rental monetizer. Charge the landlord, and get legal review."}
+  ]},
+  { id:"C", title:"Buyer & seller depth", tag:"product", note:"", items:[
+    {i:"C1", n:"Premium listing media SKU (~$40–80)", w:"AI virtual staging, interactive floor plan, hero placement. <a href=\"https://zillow.mediaroom.com/2025-09-10-Zillow-brings-AI-powered-Virtual-Staging-to-Showcase-listings\">Zillow Showcase</a> listings sell for ~$7,000 more with +75% views and +68% saves.", m:["M","v2"], f:["rev"]},
+    {i:"C2", n:"Seller “deal room” dashboard", w:"Showings calendar, offer list, counter-offer tracking, document checklist. Houzeo's sellers saved an average $8,701 in 2025.", m:["L","v2"], f:["ret"]},
+    {i:"C3", n:"Self-serve tour booking with ID-verified buyers", w:"Owner publishes slots; verified buyers self-book. Zillow: “the highest-quality buyers book tours on their own.”", m:["M","mvp"], f:["ret"]},
+    {i:"C4", n:"Publish AVM accuracy stats + confidence bands", w:"Zillow publishes a median error of 1.94% on-market / 7.06% off-market. Transparency defuses the “you'll underprice your home” attack agents will make against FSBO.", m:["S","v2"], f:["tru"]},
+    {i:"C5", n:"AI “ask this home anything”", w:"Per-listing Q&A on taxes, utilities, zoning, renovation history. Flyhomes AI and Homes.com's Feb 2026 AI experience both ship this.", m:["M","v2"], f:["ret"]},
+    {i:"C6", n:"Benchmarked listing analytics", w:"“Your listing got 68% more saves than comparable Regina 3-beds.” Makes owners feel the platform working — and sells C1.", m:["S","v2"], f:["rev"]},
+    {i:"C7", n:"Flat-fee MLS / REALTOR.ca mere-posting bridge", w:"Optional paid upgrade via a partner brokerage. Canadian mere postings run $500–$1,500 (ComFree $497–$1,197, HonestDoor ~$500, Bōde $949).", m:["M","v2"], f:["rev"]},
+    {i:"C8", n:"Commute-time and amenity map overlays", w:"Trulia ships 34 overlays. <b>Avoid crime overlays in Canada</b> — defamation and discrimination risk.", m:["M","v2"], f:["ret"]},
+    {i:"C9", n:"Roommate / flatmate matching", w:"NoBroker's “Find My Flatmate,” paired with your existing room filter. U of R hit record enrolment of 17,409 in Fall 2024.", m:["M","v2"], f:["ret"]},
+    {i:"C10", n:"Quarterly “Regina Rent & Price Index”", w:"Free PR and SEO from your own platform data — modelled on Apartments.com's RentPulse and Zumper's rent reports. Works before you have much supply.", m:["S","v2"], f:["ret"]},
+    {i:"C11", n:"Portage app inside ChatGPT / Claude / Gemini", w:"Zillow launched the only real-estate app in ChatGPT on 6 Oct 2025 — built in about six weeks. Cheap distribution a local player can win first.", m:["M","v3"], f:["ret"]},
+    {i:"C12", n:"Buyer affordability badge on every listing", w:"Zillow's BuyAbility has 2.9M enrollees and drives ~44% mortgage attach in its enhanced markets.", m:["M","v2"], f:["rev"]}
+  ]},
+  { id:"D", title:"Documents", tag:"your revised scope", note:"You cut lease generation and rent collection. The research says that was the right call — three regulatory landmines avoided.", items:[
+    {i:"D1", n:"Document locker", w:"Upload, organize, retrieve and share signed agreements, invoices, receipts, inspection reports and condo documents. Attach to a listing, thread or property. <b>Passive storage — Portage never generates, signs or processes anything.</b>", m:["M","mvp"], f:["ret"], warn:"Still carries PIPEDA duties: encryption at rest, user-controlled deletion, a documented retention schedule, Canadian data residency, breach response. The OPC has found indefinite retention of ID data violates PIPEDA — so for verification (A14) use verify-then-delete, storing a pass/fail and audit hash rather than the ID image."},
+    {i:"D2", n:"Document sharing with expiry and revocation", w:"Share into a chat thread with a time limit.", m:["S","v2"], f:["tru"]},
+    {i:"D3", n:"Informational document checklists", w:"“What you'll need for a private sale in Saskatchewan”, linking out to lawyers. Saskatchewan explicitly exempts “the provision of legal information” from the practice of law — but completing forms for a user is legal <em>services</em>.", m:["S","v2"], f:["ret"]},
+    {i:"D4", n:"Lease generation and e-signing", w:"<b>Removed per your decision.</b> Also risks unauthorized practice of law and the trading line.", m:["cut"], d:"drop"},
+    {i:"D5", n:"Rent collection, payment rails, rent reporting", w:"<b>Removed per your decision.</b> Would trigger FINTRAC money-services-business registration plus Bank of Canada registration under the Retail Payment Activities Act.", m:["cut"], d:"drop"}
+  ]},
+  { id:"E", title:"Services marketplace", tag:"main revenue engine", note:"With payments and applications off the table, this has to carry the business model.", items:[
+    {i:"E1", n:"Homeowner-choice quote requests", w:"The homeowner picks which pros to contact. <b>Never sell one lead to five pros</b> — <a href=\"https://ir.angi.com/static-files/f756dfd9-c9eb-4e66-9753-b8e170977ea9\">Angi deliberately destroyed 81% of its network lead volume</a> to escape that model; pro churn then fell ~30% and retention rose 17%. Thumbtack's opposite approach drew 1,000+ BBB complaints.", m:["M","mvp"], f:["rev"]},
+    {i:"E2", n:"Transaction-moment sequencing", w:"Movers at lease signing, cleaning at move-out, locksmith and painting at possession. NoBroker runs ~200,000 service requests a month by attaching to these moments.", m:["M","v2"], f:["rev"]},
+    {i:"E3", n:"Pro subscription or per-accepted-booking fee", w:"Not per-lead. Yelp's Request-a-Quote and Homes.com's ~$3,400/yr membership are the models.", m:["M","v2"], f:["rev"]},
+    {i:"E4", n:"Verified trade licences in pro onboarding", w:"In Saskatchewan, TSASK licenses electrical and gas contractors ($10,000 surety bond), and electrician, plumber, refrigeration/AC, sheet metal and sprinkler fitter are compulsory-apprenticeship trades.", m:["M","mvp"], f:["tru"], warn:"Saying pros are “vetted & insured” without a per-pro evidence file — licence check, insurance certificate with expiry, re-verification cadence — is a Competition Act s.74.01 exposure."},
+    {i:"E5", n:"Movers quote calculator", w:"Distance and size to an instant estimate, with two or three vetted Regina partners. Referral model, not aggregator — Canadian labour costs make NoBroker's branded-delivery approach uneconomic.", m:["S","v2"], f:["rev"]}
+  ]},
+  { id:"F", title:"Directories", tag:"your additions", note:"Both of these were your ideas. The research supports them — with two constraints.", items:[
+    {i:"F1", n:"Real-estate agent directory", w:"Profiles, specialties, reviews, contact — “find an agent if you want one.” Zillow Premier Agent charges ~$20–60/lead (up to $450+ in hot metros) or takes 15–40% of the closed commission via Flex.", m:["M","v2"], f:["rev"], warn:"Two cautions. (1) Never use REALTOR® or MLS® in branding or as a generic noun — CREA's manual states REALTOR® “must not be used as a synonym for real estate agent.” (2) Your design says “no agent required.” Frame this as agent-<em>optional</em>: owner listings stay the default tab. If agent leads ever outrank owner listings you have become Zillow, and the structural wedge is gone."},
+    {i:"F2", n:"Mortgage broker directory + pre-approval hand-off", w:"Wires into your existing calculator (A10). Zillow's mortgage attach is ~44% in mature markets, and Rocket bought Redfin for $1.75B essentially as loan top-of-funnel.", m:["M","v2"], f:["rev"], warn:"Saskatchewan mortgage brokerages are FCAA-licensed under The Mortgage Brokerages and Mortgage Administrators Act, and referral-fee disclosure rules apply to the licensee. Mortgage brokers became FINTRAC reporting entities in Oct 2024 — you stay a referrer, not a broker."},
+    {i:"F3", n:"Real-estate lawyer directory with flat-fee quotes", w:"<b>Every Saskatchewan private sale ends at two law offices</b> — ISC title transfers need a witness who is a practising SK lawyer, or an affidavit of execution. DuProprio bundles notary support for exactly this reason. Lean into it rather than replacing it.", m:["S","mvp"], f:["rev"]},
+    {i:"F4", n:"Inspector, photographer and stager directory", w:"Extends the services marketplace into the sale journey.", m:["S","v2"], f:["rev"]}
+  ]},
+  { id:"G", title:"Supply-side growth", tag:"cold start", note:"Landlord and seller acquisition is the constraint — not renter or buyer demand.", items:[
+    {i:"G1", n:"Property-manager & condo-board vacancy pipeline", w:"Free lightweight tools (move-out notice capture, auto-drafted listing) so you see vacancies before the market does. This is NoBrokerHood's flywheel without building gate software — Condo Control already owns Canadian condo ops, so partner rather than compete.", m:["L","v3"], f:["ret"]},
+    {i:"G2", n:"Landlord acceleration tiers", w:"Featured placement, boosts, and a “leased in 30 days or refund” guarantee. Regina's 2.7% vacancy makes that cheap to honour. Modelled on NoBroker's MoneyBack tiers.", m:["M","v2"], f:["rev"], warn:"Write refund terms in plain English. Refund disputes on exactly these guarantees are NoBroker's single biggest reputational wound."},
+    {i:"G3", n:"Student & newcomer channel partnerships", w:"U of R and Sask Polytechnic. SpacesShared's proven route — 10,000+ users through college partnerships, already operating in Saskatchewan. Time it to the September intake.", m:["S","mvp"], f:["ret"]},
+    {i:"G4", n:"Remote / investor landlord bundle", w:"Via a licensed local property manager at ~8–10% of rent, with Portage taking a slice. NoBroker's NRI product is the template.", m:["M","v3"], f:["rev"], warn:"Property management is registrable activity in Saskatchewan. You must be the referrer, never the manager."},
+    {i:"G5", n:"Builder / new-construction listings", w:"Regina had 1,687 housing starts in 2025, up 38%. Fills the inventory gap in a 1.6-months-of-supply market.", m:["M","v2"], f:["ret"]},
+    {i:"G6", n:"Seller concierge package ($499–999)", w:"Photos, 3D tour, AI price report, showing scheduler, lawyer referral. Purplebricks-lite without the salaried-agent overhead that killed FairSquare.", m:["M","v3"], f:["rev"], warn:"Verify the licensing boundary first — anything resembling pricing advice or negotiation for a specific seller risks the “trade” definition in The Real Estate Act."},
+    {i:"G7", n:"Lightweight CRM for repeat landlords", w:"Zillow paid $400M+ for Follow Up Boss on this logic. Miniaturized, it's retention infrastructure for multi-property owners.", m:["M","v3"], f:["ret"]},
+    {i:"G8", n:"Hyperlocal advertising to verified residents", w:"<b>Defer until ~10k+ monthly users.</b> MyGate earns 65–70% of its revenue from advertising, not SaaS — but on 5.7M dense households. Regina can't support it for years, and CASL/PIPEDA constrain it.", m:["M","v4"], f:["rev"]}
+  ]},
+  { id:"H", title:"Do not build", tag:"anti-features", note:"Each of these killed or badly damaged a real company. Included so the decision is explicit.", items:[
+    {i:"H1", n:"iBuying / cash offers on your own balance sheet", w:"Zillow Offers lost over $1B in 3.5 years and shut in one quarter of market turn. Opendoor lost $1.3B in 2025 even as category winner. If wanted, offer a <em>partner</em> cash-offer button — referral only.", m:["never"], d:"drop"},
+    {i:"H2", n:"Holding deposits or rent money", w:"FINTRAC MSB + RPAA registration, and Saskatchewan trust-account rules that only registered brokerages can satisfy. India's NestAway went from a ₹1,800 Cr valuation to a ₹90 Cr sale partly on deposit disputes.", m:["never"], d:"drop"},
+    {i:"H3", n:"Blind lead resale in home services", w:"Thumbtack's model: 1,000+ BBB complaints and chronic pro churn.", m:["never"], d:"drop"},
+    {i:"H4", n:"Salaried agents or human relationship managers", w:"Killed FairSquare, Homie and Redfin's salaried model. NoBroker's RM tiers are built on Indian labour arbitrage that doesn't exist at Canadian wages.", m:["never"], d:"drop"},
+    {i:"H5", n:"Contact paywalls at launch", w:"Kills liquidity while Facebook Marketplace is free. NoBroker earned this only after becoming the default supply in 10M-person metros.", m:["never"], d:"drop"},
+    {i:"H6", n:"Guard / gate / visitor-management app", w:"No gated-society culture in Regina, no guard labour market, and Condo Control owns the Canadian condo niche.", m:["never"], d:"drop"},
+    {i:"H7", n:"A second brand", w:"Trulia's neighbourhood-UGC treasure decayed to a fraction of category share under Zillow's shadow. One brand, all features.", m:["never"], d:"drop"},
+    {i:"H8", n:"Using REALTOR® / MLS® in branding", w:"CREA trademarks. “The MLS® mark can never be used as part of a business name, trade name or in any corporate branding.”", m:["never"], d:"drop"},
+    {i:"H9", n:"Scraping Realtor.ca", w:"Breaches terms. CREA's DDF feed requires a Data Access Agreement and member direction — a non-member platform cannot obtain a feed at all.", m:["never"], d:"drop"},
+    {i:"H10", n:"Crime map overlays", w:"US-normal, Canadian-risky: defamation and discrimination exposure.", m:["never"], d:"drop"},
+    {i:"H11", n:"Operating co-living beds", w:"Stanza Living runs 75,000+ beds and turned its first profit only via non-operating income. List rooms; don't run them.", m:["never"], d:"drop"}
+  ]}
+];
+
+const KEY = "portage.decisions.v1";
+const FLAGN = { rev:"REVENUE", ret:"RETENTION", tru:"TRUST" };
+const MVP_SET = ["A21","B1","B2","B3","B4","D1","E1","E4","F3","G3"];
+let state = {};
+try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { state = {}; }
+
+const board = document.getElementById("board");
+const filters = document.getElementById("filters");
+let active = "ALL";
+
+function allItems() { return DATA.flatMap(g => g.items); }
+
+function render() {
+  board.innerHTML = "";
+  DATA.forEach(g => {
+    if (active !== "ALL" && active !== g.id) return;
+    const sec = document.createElement("section");
+    sec.className = "grp";
+    const head = document.createElement("div");
+    head.className = "grp-head";
+    head.innerHTML = '<h2>' + g.title + '</h2><span class="tag">' + g.tag + '</span>';
+    sec.appendChild(head);
+    if (g.note) {
+      const p = document.createElement("p");
+      p.className = "grp-note";
+      p.textContent = g.note;
+      sec.appendChild(p);
+    }
+    const rows = document.createElement("div");
+    rows.className = "rows";
+    g.items.forEach(it => rows.appendChild(rowEl(it)));
+    sec.appendChild(rows);
+    board.appendChild(sec);
+  });
+  tally();
+}
+
+function rowEl(it) {
+  const cur = state[it.i] || it.d || "";
+  const row = document.createElement("div");
+  row.className = "row" + (it.m && it.m.includes("exists") ? " exists" : "");
+  if (cur) row.dataset.state = cur;
+
+  const fid = document.createElement("div");
+  fid.className = "fid";
+  fid.textContent = it.i;
+
+  const body = document.createElement("div");
+  body.className = "body";
+  const flags = (it.f || []).map(f => '<span class="flagx fx-' + f.slice(0,3) + '">' + FLAGN[f] + '</span>').join("");
+  const meta = (it.m || []).map(m => "<span>" + m + "</span>").join("");
+  body.innerHTML =
+    '<div class="name">' + it.n + flags + '</div>' +
+    '<p class="why">' + it.w + '</p>' +
+    (meta ? '<div class="meta">' + meta + '</div>' : '') +
+    (it.warn ? '<div class="warnbox">' + it.warn + '</div>' : '');
+
+  const choice = document.createElement("div");
+  choice.className = "choice";
+  [["keep","KEEP"],["drop","CUT"]].forEach(([v,label]) => {
+    const b = document.createElement("button");
+    b.dataset.v = v;
+    b.textContent = label;
+    b.setAttribute("aria-pressed", cur === v ? "true" : "false");
+    b.setAttribute("aria-label", label + " " + it.i + ": " + it.n);
+    b.addEventListener("click", () => {
+      state[it.i] = state[it.i] === v ? "" : v;
+      if (!state[it.i]) delete state[it.i];
+      persist();
+      render();
+    });
+    choice.appendChild(b);
+  });
+
+  row.append(fid, body, choice);
+  return row;
+}
+
+function persist() {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+}
+
+function tally() {
+  const items = allItems();
+  let k = 0, d = 0;
+  items.forEach(it => {
+    const v = state[it.i] || it.d || "";
+    if (v === "keep") k++;
+    else if (v === "drop") d++;
+  });
+  const total = items.length;
+  const u = total - k - d;
+  document.getElementById("nk").textContent = k;
+  document.getElementById("nd").textContent = d;
+  document.getElementById("nu").textContent = u;
+  document.getElementById("mk").style.width = (k / total * 100) + "%";
+  document.getElementById("md").style.width = (d / total * 100) + "%";
+  writeOut(k, d, u);
+}
+
+function writeOut(k, d, u) {
+  const keeps = [], drops = [], open = [];
+  DATA.forEach(g => g.items.forEach(it => {
+    const v = state[it.i] || it.d || "";
+    const line = it.i + " — " + it.n;
+    if (v === "keep") keeps.push(line);
+    else if (v === "drop") drops.push(line);
+    else open.push(line);
+  }));
+  const txt =
+    "PORTAGE FEATURE DECISIONS\n" +
+    "Keep " + k + " · Cut " + d + " · Undecided " + u + "\n\n" +
+    "== KEEP ==\n" + (keeps.join("\n") || "(none)") + "\n\n" +
+    "== CUT ==\n" + (drops.join("\n") || "(none)") + "\n\n" +
+    "== STILL OPEN ==\n" + (open.join("\n") || "(none)") + "\n";
+  document.getElementById("out").value = txt;
+}
+
+// filters
+const groups = [["ALL","Everything"]].concat(DATA.map(g => [g.id, g.id + " · " + g.title]));
+groups.forEach(([id, label]) => {
+  const b = document.createElement("button");
+  b.className = "chip";
+  b.textContent = label;
+  b.setAttribute("aria-pressed", id === active ? "true" : "false");
+  b.addEventListener("click", () => {
+    active = id;
+    [...filters.children].forEach(c => c.setAttribute("aria-pressed", "false"));
+    b.setAttribute("aria-pressed", "true");
+    render();
+  });
+  filters.appendChild(b);
+});
+
+document.getElementById("mvp").addEventListener("click", () => {
+  allItems().forEach(it => {
+    if (it.d === "drop") { state[it.i] = "drop"; return; }
+    if (it.m && it.m.includes("exists")) { state[it.i] = "keep"; return; }
+    state[it.i] = MVP_SET.includes(it.i) ? "keep" : "";
+    if (!state[it.i]) delete state[it.i];
+  });
+  persist();
+  render();
+});
+
+document.getElementById("clear").addEventListener("click", () => {
+  state = {};
+  persist();
+  render();
+});
+
+render();
+</script>
