@@ -129,10 +129,24 @@ rest.
 On serverless platforms, connect through a pooler rather than raising `max` in
 `pool.ts` — a connection per invocation will exhaust Postgres.
 
-The background worker (moderation triage, alert sweeps, AVM recalculation,
-retention deletes) is a separate entrypoint from the API and does not fit a
-request-scoped serverless runtime. Run it as a small always-on process, or
-drive short jobs from a scheduler.
+Scheduled work — moderation triage, alert sweeps, AVM recalculation, retention
+deletes — has no HTTP request to run inside. The queue lives in Postgres
+(`moderation_queue`, and `messages.moderation_verdict = 'pending'`), so any
+scheduler that can call an endpoint on a cadence will drain it.
+
+At single-city scale, **Vercel Cron on the Pro plan is sufficient**: 100 cron
+jobs per project, per-minute cadence, 300-second max function duration. The
+jobs Portage needs finish in seconds — evaluating a few thousand saved
+searches, deleting a handful of expired documents, classifying the listings
+submitted in the last minute.
+
+A separate always-on worker only becomes necessary when a job cannot finish
+within the function timeout and cannot be chunked across runs — a bulk
+re-moderation of the entire corpus, or a full AVM rebuild. Design jobs to
+process a bounded batch per invocation and that day stays far off.
+
+Note that Vercel Cron schedules are UTC only; convert Regina times (CST, UTC-6)
+before writing a schedule.
 
 ## Next
 
