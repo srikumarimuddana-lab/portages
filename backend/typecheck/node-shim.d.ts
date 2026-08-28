@@ -60,11 +60,14 @@ declare namespace NodeJS { type ProcessEnv = Record<string, string | undefined>;
 interface Buffer extends Uint8Array {
   toString(enc?: string): string;
   equals(other: Uint8Array): boolean;
+  copy(target: Buffer, targetStart?: number, sourceStart?: number, sourceEnd?: number): number;
+  subarray(begin?: number, end?: number): Buffer;
   readonly length: number;
 }
 declare const Buffer: {
-  from(v: string | ArrayBufferLike | Uint8Array, enc?: string): Buffer;
+  from(v: string | ArrayBufferLike | Uint8Array | readonly number[], enc?: string): Buffer;
   concat(list: readonly Uint8Array[]): Buffer;
+  alloc(size: number, fill?: number): Buffer;
 };
 interface ImportMeta { url: string }
 
@@ -131,4 +134,18 @@ declare const URL: { new (url: string, base?: string): URL };
 
 declare module 'node:crypto' {
   export function randomUUID(): string;
+}
+
+declare module 'node:crypto' {
+  interface KeyObject {
+    readonly asymmetricKeyType?: string;
+    export(opts: { type: string; format: string }): string | Buffer;
+  }
+  export function createPrivateKey(key: string | Buffer): KeyObject;
+  export function createSign(alg: string): { update(d: string): { sign(key: KeyObject): Buffer } };
+  export function createVerify(alg: string): { update(d: string): { verify(key: KeyObject, sig: Buffer): boolean } };
+  export function generateKeyPairSync(
+    type: string,
+    opts: Record<string, unknown>,
+  ): { privateKey: KeyObject; publicKey: KeyObject };
 }

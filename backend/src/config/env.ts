@@ -19,6 +19,8 @@ export interface Env {
   allowedOrigins: string[];
   secureCookies: boolean;
   trustProxy: boolean;
+  /** Apple MapKit JS credentials. Optional: absent means the map is disabled. */
+  mapkit?: { teamId: string; keyId: string; privateKeyPem: string };
 }
 
 const MIN_SECRET_LEN = 32;
@@ -69,6 +71,19 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     errors.push('ALLOWED_ORIGINS is required in production');
   }
 
+  // MapKit is optional, but partially-configured is always a mistake — fail
+  // loudly rather than silently serving a broken map.
+  const mkTeam = source['MAPKIT_TEAM_ID'];
+  const mkKey = source['MAPKIT_KEY_ID'];
+  const mkPem = source['MAPKIT_PRIVATE_KEY'];
+  const mkPresent = [mkTeam, mkKey, mkPem].filter(Boolean).length;
+  if (mkPresent > 0 && mkPresent < 3) {
+    errors.push('MAPKIT_TEAM_ID, MAPKIT_KEY_ID and MAPKIT_PRIVATE_KEY must all be set together');
+  }
+  if (mkPem && !mkPem.includes('BEGIN PRIVATE KEY')) {
+    errors.push('MAPKIT_PRIVATE_KEY must be the PKCS#8 PEM contents of the .p8 file');
+  }
+
   if (errors.length) {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join('\n  - ')}`);
   }
@@ -84,5 +99,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     // Cookies are Secure everywhere except plain local development.
     secureCookies: isProd || source['FORCE_SECURE_COOKIES'] === 'true',
     trustProxy: source['TRUST_PROXY'] === 'true',
+    ...(mkPresent === 3
+      ? { mapkit: { teamId: mkTeam!, keyId: mkKey!, privateKeyPem: mkPem!.replace(/\\n/g, '\n') } }
+      : {}),
   });
 }
