@@ -45,6 +45,7 @@ declare module 'node:assert/strict' {
     match(a: string, re: RegExp, m?: string): void;
     ok(v: unknown, m?: string): void;
     throws(fn: () => unknown, m?: unknown): void;
+    fail(m?: string): never;
   }
   const assert: A;
   export default assert;
@@ -78,4 +79,56 @@ declare module 'pg' {
   }
   const pg: { Pool: typeof Pool };
   export default pg;
+}
+
+/**
+ * Web-standard globals. Node 18+ provides these at runtime and `@types/node`
+ * declares them, so this block is only needed for offline type-checking.
+ */
+interface Headers {
+  get(name: string): string | null;
+  set(name: string, value: string): void;
+  append(name: string, value: string): void;
+  getSetCookie?(): string[];
+}
+declare const Headers: { new (init?: Record<string, string> | Headers): Headers };
+
+interface ReadableStreamReader {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+  releaseLock?(): void;
+}
+interface ReadableStreamLike { getReader(): ReadableStreamReader }
+
+interface Request {
+  readonly method: string;
+  readonly url: string;
+  readonly headers: Headers;
+  readonly body: ReadableStreamLike | null;
+}
+declare const Request: {
+  new (input: string, init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  }): Request;
+};
+
+interface Response {
+  readonly status: number;
+  readonly headers: Headers;
+  json(): Promise<unknown>;
+}
+declare const Response: {
+  new (body?: string | null, init?: { status?: number; headers?: Headers }): Response;
+};
+
+declare const TextDecoder: {
+  new (label?: string, opts?: { fatal?: boolean }): { decode(input?: Uint8Array): string };
+};
+interface URLSearchParams { get(name: string): string | null }
+interface URL { readonly searchParams: URLSearchParams }
+declare const URL: { new (url: string, base?: string): URL };
+
+declare module 'node:crypto' {
+  export function randomUUID(): string;
 }

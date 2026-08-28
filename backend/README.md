@@ -12,7 +12,10 @@ left to code review.
 | Security core (crypto, sessions, CSRF, rate limiting, validation) | Complete | ✅ 56 tests passing |
 | Document locker policy | Complete | ✅ Covered by tests |
 | Auth service | Complete | Typechecked; needs integration tests against a live DB |
-| HTTP transport, listings/search/messaging/AI modules | Not started | — |
+| HTTP layer (guard, responses, auth + document routes) | Complete | ✅ 24 tests passing |
+| Document locker service | Complete | Typechecked; needs integration tests |
+| Next.js route adapters | Complete | See `examples/nextjs/` |
+| Listings, search, messaging, AI modules | Not started | — |
 
 ## Quick start
 
@@ -52,7 +55,27 @@ registration under the Retail Payment Activities Act. The document locker
 stores paperwork the user already has; it does not generate, sign, or process
 anything.
 
-## Security properties (all covered by `test/security.test.ts`)
+## The request guard
+
+Every route passes through `src/http/guard.ts`, which runs its checks in
+increasing order of cost so an attacker cannot make the server do expensive
+work before being rejected:
+
+1. Method and content type (free)
+2. Origin allowlist — blocks cross-site writes immediately
+3. Rate limit — keyed by a pseudonymized IP
+4. Body size cap, then JSON parse
+5. Session lookup (one indexed query)
+6. CSRF — constant-time compare against the digest stored on the session
+7. Schema validation — only now is the payload's shape examined
+
+Authentication runs before CSRF deliberately: the CSRF token is verified
+against material stored on the session, so the session must resolve first.
+
+No route accepts an owner id from the client. The principal always comes from
+the session — that is the difference between access control and a suggestion.
+
+## Security properties (all covered by `test/security.test.ts` and `test/http.test.ts`)
 
 | Property | How |
 |---|---|
