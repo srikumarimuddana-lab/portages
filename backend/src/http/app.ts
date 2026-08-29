@@ -13,6 +13,10 @@ import { LIMITS } from '../lib/ratelimit.js';
 import { DurableRateLimiter } from '../lib/ratelimit-db.js';
 import { MapKitTokenIssuer } from '../modules/maps/mapkit.js';
 import { OAuthService } from '../modules/auth/oauth/service.js';
+import { NotifyService } from '../modules/notify/service.js';
+import { EmailChannel } from '../modules/notify/channels/email.js';
+import { SmsChannel } from '../modules/notify/channels/sms.js';
+import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
 import type { GuardConfig } from './guard.js';
 
 export interface App {
@@ -23,6 +27,7 @@ export interface App {
   /** Absent until the Apple MapKit keys are configured. */
   mapkit: MapKitTokenIssuer | null;
   oauth: OAuthService;
+  notify: NotifyService;
   cfg: GuardConfig;
   hsts: boolean;
   secureCookies: boolean;
@@ -41,6 +46,30 @@ async function build(): Promise<App> {
   const auth = new AuthService({ db, pepper: env.pepper });
   const documents = new DocumentService(db, env.storageSecret);
   const mapkit = env.mapkit ? new MapKitTokenIssuer(env.mapkit) : null;
+  // A channel is only live when BOTH the AWS credentials and its own sender
+  // identity are configured; otherwise it reports itself unconfigured and the
+  // notify service blocks rather than throwing at send time.
+  const email = new EmailChannel(
+    env.aws?.sesFromAddress
+      ? {
+          region: env.aws.region,
+          credentials: { accessKeyId: env.aws.accessKeyId, secretAccessKey: env.aws.secretAccessKey },
+          fromAddress: env.aws.sesFromAddress,
+          configurationSet: env.aws.sesConfigurationSet,
+        }
+      : null,
+  );
+  const sms = new SmsChannel(
+    env.aws?.smsOriginationIdentity
+      ? {
+          region: env.aws.region,
+          credentials: { accessKeyId: env.aws.accessKeyId, secretAccessKey: env.aws.secretAccessKey },
+          originationIdentity: env.aws.smsOriginationIdentity,
+        }
+      : null,
+  );
+  const notify = new NotifyService(db, [email, sms, new WhatsAppChannel()]);
+
   const oauth = new OAuthService(db, {
     credentials: env.oauth,
     publicOrigin: env.publicOrigin,
@@ -63,7 +92,7 @@ async function build(): Promise<App> {
   };
 
   return {
-    env, db, auth, documents, mapkit, oauth, cfg,
+    env, db, auth, documents, mapkit, oauth, notify, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,
   };

@@ -25,6 +25,15 @@ export interface Env {
   oauth: Record<string, { clientId: string; clientSecret: string }>;
   /** Public origin used for OAuth redirect URIs and post-login redirects. */
   publicOrigin: string;
+  /** AWS credentials plus per-channel sender config. Absent = channel off. */
+  aws?: {
+    region: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    sesFromAddress?: string | undefined;
+    sesConfigurationSet?: string | undefined;
+    smsOriginationIdentity?: string | undefined;
+  };
 }
 
 const MIN_SECRET_LEN = 32;
@@ -115,6 +124,29 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     }
   }
 
+  // AWS: credentials are all-or-nothing, and a channel is only enabled when
+  // its own sender identity is present too. A configured-looking channel that
+  // 500s on every send is worse than one that is visibly off.
+  const awsKey = source['AWS_ACCESS_KEY_ID'];
+  const awsSecret = source['AWS_SECRET_ACCESS_KEY'];
+  const awsRegion = source['AWS_REGION'] ?? 'ca-central-1';
+  let aws: Env['aws'];
+  if (awsKey && awsSecret) {
+    aws = {
+      region: awsRegion,
+      accessKeyId: awsKey,
+      secretAccessKey: awsSecret,
+      sesFromAddress: source['SES_FROM_ADDRESS'],
+      sesConfigurationSet: source['SES_CONFIGURATION_SET'],
+      smsOriginationIdentity: source['SMS_ORIGINATION_IDENTITY'],
+    };
+  } else if (awsKey || awsSecret) {
+    errors.push('AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together');
+  }
+  if (source['SES_FROM_ADDRESS'] && !awsKey) {
+    errors.push('SES_FROM_ADDRESS requires AWS credentials');
+  }
+
   if (errors.length) {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join('\n  - ')}`);
   }
@@ -132,6 +164,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     trustProxy: source['TRUST_PROXY'] === 'true',
     oauth,
     publicOrigin,
+    ...(aws ? { aws } : {}),
     ...(mkPresent === 3
       ? { mapkit: { teamId: mkTeam!, keyId: mkKey!, privateKeyPem: mkPem!.replace(/\\n/g, '\n') } }
       : {}),
