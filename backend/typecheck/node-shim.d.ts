@@ -45,6 +45,7 @@ declare module 'node:assert/strict' {
     match(a: string, re: RegExp, m?: string): void;
     ok(v: unknown, m?: string): void;
     throws(fn: () => unknown, m?: unknown): void;
+    rejects(fn: () => Promise<unknown>, m?: unknown): Promise<void>;
     fail(m?: string): never;
   }
   const assert: A;
@@ -92,6 +93,7 @@ interface Headers {
   get(name: string): string | null;
   set(name: string, value: string): void;
   append(name: string, value: string): void;
+  forEach(cb: (value: string, key: string) => void): void;
   getSetCookie?(): string[];
 }
 declare const Headers: { new (init?: Record<string, string> | Headers): Headers };
@@ -111,7 +113,7 @@ interface Request {
 declare const Request: {
   new (input: string, init?: {
     method?: string;
-    headers?: Record<string, string>;
+    headers?: Record<string, string> | Headers;
     body?: string;
   }): Request;
 };
@@ -120,6 +122,7 @@ interface Response {
   readonly status: number;
   readonly headers: Headers;
   json(): Promise<unknown>;
+  text(): Promise<string>;
 }
 declare const Response: {
   new (body?: string | null, init?: { status?: number; headers?: Headers }): Response;
@@ -129,7 +132,11 @@ declare const TextDecoder: {
   new (label?: string, opts?: { fatal?: boolean }): { decode(input?: Uint8Array): string };
 };
 interface URLSearchParams { get(name: string): string | null }
-interface URL { readonly searchParams: URLSearchParams }
+interface URL {
+  readonly searchParams: URLSearchParams;
+  readonly pathname: string;
+  toString(): string;
+}
 declare const URL: { new (url: string, base?: string): URL };
 
 declare module 'node:crypto' {
@@ -149,3 +156,25 @@ declare module 'node:crypto' {
     opts: Record<string, unknown>,
   ): { privateKey: KeyObject; publicKey: KeyObject };
 }
+
+/** node:http surface used by src/index.ts (the local dev server). */
+declare module 'node:http' {
+  export interface IncomingMessage extends AsyncIterable<unknown> {
+    url?: string;
+    method?: string;
+    headers: Record<string, string | string[] | undefined>;
+  }
+  export interface ServerResponse {
+    headersSent: boolean;
+    writeHead(status: number, headers?: Record<string, string | string[]>): void;
+    end(body?: string): void;
+  }
+  export interface Server {
+    listen(port: number, cb?: () => void): void;
+  }
+  export function createServer(
+    handler: (req: IncomingMessage, res: ServerResponse) => void,
+  ): Server;
+}
+
+declare function setTimeout(cb: (...a: unknown[]) => void, ms: number): unknown;

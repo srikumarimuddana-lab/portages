@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push supersedes an in-flight run on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  verify:
+    name: Typecheck, tests, migrations
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: portage
+          POSTGRES_PASSWORD: portage_ci
+          POSTGRES_DB: portage_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U portage"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      # tsconfig.test.json covers src AND test against the real @types/node.
+      # tsconfig.check.json is the offline variant that substitutes a local
+      # shim; using it here would collide with the installed type packages.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      # Applies every migration to an empty database. Catches ordering
+      # mistakes and anything that only works against an already-migrated
+      # schema — the class of bug that is invisible locally.
+      - name: Migrations apply to a fresh database
+        env:
+          PGPASSWORD: portage_ci
+        run: |
+          for f in migrations/*.sql; do
+            case "$f" in *.down.sql) continue;; esac
+            echo "applying $f"
+            psql -h localhost -U portage -d portage_ci -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Down-migrations reverse cleanly
+        env:
+          PGPASSWORD: portage_ci
+        run: |
+          for f in $(ls -r migrations/*.down.sql 2>/dev/null); do
+            echo "reverting $f"
+            psql -h localhost -U portage -d portage_ci -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+  secrets:
+    name: No secrets in the diff
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Deliberately narrow: real key material, not anything that merely
+      # mentions the word "secret". A noisy check gets ignored.
+      - name: Scan for key material
+        run: |
+          if git grep -nIE \
+            -e '\-\-\-\-\-BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY\-\-\-\-\-' \
+            -e 'AKIA[0-9A-Z]{16}' \
+            -e 'sk-ant-[A-Za-z0-9_-]{20,}' \
+            -e 'ghp_[A-Za-z0-9]{36}' \
+            -- . ':(exclude)*.example' ':(exclude)**/typecheck/**'; then
+            echo "::error::Possible credential committed. Remove it and rotate the key."
+            exit 1
+          fi
+          echo "No key material found."

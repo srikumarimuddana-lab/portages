@@ -6,7 +6,7 @@
  *
  *   1. Method + content type   (free)
  *   2. Origin allowlist        (free, and blocks cross-site writes early)
- *   3. Rate limit              (in-memory)
+ *   3. Rate limit              (local cache first, then shared Postgres state)
  *   4. Body size + JSON parse  (bounded)
  *   5. Session lookup          (one indexed query)
  *   6. CSRF                    (constant-time compare against stored digest)
@@ -24,7 +24,7 @@ import {
   verifyCsrf,
 } from '../lib/session.js';
 import { isJsonContentType, originAllowedForWrite, MAX_JSON_BYTES } from './headers.js';
-import { RateLimiter, type RateLimitRule } from '../lib/ratelimit.js';
+import type { Limiter } from '../lib/ratelimit-db.js';
 import {
   badRequest,
   forbidden,
@@ -57,10 +57,16 @@ export interface GuardConfig {
   auth: SessionResolver;
   pepper: string;
   trustProxy: boolean;
+  /**
+   * Both the in-process RateLimiter and the Postgres-backed
+   * DurableRateLimiter satisfy Limiter, so the transport does not care which
+   * is wired in. Production uses the durable one — see ratelimit-db.ts for
+   * why per-process counters are wrong on serverless.
+   */
   limiters: {
-    read: RateLimiter;
-    write: RateLimiter;
-    auth: RateLimiter;
+    read: Limiter;
+    write: Limiter;
+    auth: Limiter;
   };
 }
 
@@ -123,7 +129,7 @@ export async function guard<T = undefined>(
   //    retained in memory or logs.
   const limiter = cfg.limiters[opts.limit];
   const key = pseudonymize(clientIp, cfg.pepper).toString('base64url');
-  const verdict = limiter.check(key);
+  const verdict = await limiter.check(key);
   if (!verdict.allowed) throw new RateLimitError(verdict.retryAfterSec);
 
   // 4. Body: bounded read, then parse. Content-Length is a hint, not a

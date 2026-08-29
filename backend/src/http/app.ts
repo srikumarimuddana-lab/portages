@@ -9,7 +9,8 @@ import { loadEnv, type Env } from '../config/env.js';
 import { createPool, type Sql } from '../db/pool.js';
 import { AuthService } from '../modules/auth/service.js';
 import { DocumentService } from '../modules/documents/service.js';
-import { RateLimiter, LIMITS } from '../lib/ratelimit.js';
+import { LIMITS } from '../lib/ratelimit.js';
+import { DurableRateLimiter } from '../lib/ratelimit-db.js';
 import { MapKitTokenIssuer } from '../modules/maps/mapkit.js';
 import type { GuardConfig } from './guard.js';
 
@@ -45,9 +46,13 @@ async function build(): Promise<App> {
     pepper: env.pepper,
     trustProxy: env.trustProxy,
     limiters: {
-      read: new RateLimiter(LIMITS.read),
-      write: new RateLimiter(LIMITS.write),
-      auth: new RateLimiter(LIMITS.login),
+      // Shared counters in Postgres: warm serverless instances must not each
+      // keep their own budget. Read paths fail open so a database blip does
+      // not take browsing down; auth and write paths fail closed, because an
+      // outage must not become a way around login throttling.
+      read: new DurableRateLimiter(db, 'read', LIMITS.read, { failOpen: true }),
+      write: new DurableRateLimiter(db, 'write', LIMITS.write),
+      auth: new DurableRateLimiter(db, 'auth', LIMITS.login),
     },
   };
 
