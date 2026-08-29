@@ -17,10 +17,17 @@ CREATE TABLE oauth_auth_requests (
   -- The `state` parameter, also the primary key. Random, single-use.
   state             text PRIMARY KEY,
   provider          text NOT NULL CHECK (provider IN ('google','facebook')),
-  -- SHA-256 of the PKCE verifier. The verifier itself never touches the
-  -- database, so a dump cannot be used to complete an in-flight login.
-  code_challenge    bytea NOT NULL,
-  nonce_hash        bytea NOT NULL,
+  -- The PKCE verifier and the nonce, held server-side.
+  --
+  -- Note on why these are stored in the clear: Portage is a CONFIDENTIAL
+  -- client. We generate the verifier, send only its S256 challenge to the
+  -- authorization endpoint, and must present the verifier itself at the token
+  -- endpoint. Storing a digest would make the exchange impossible. The row is
+  -- single-use and expires in minutes, and completing an exchange with a
+  -- stolen verifier still requires the authorization code (single-use,
+  -- short-lived, bound to our redirect_uri) and the client secret.
+  code_verifier     text NOT NULL,
+  nonce             text NOT NULL,
   -- Where to send the user afterwards. Validated as a relative path before
   -- storage — an open redirect here would be a phishing primitive.
   redirect_path     text NOT NULL DEFAULT '/',

@@ -12,6 +12,7 @@ import { DocumentService } from '../modules/documents/service.js';
 import { LIMITS } from '../lib/ratelimit.js';
 import { DurableRateLimiter } from '../lib/ratelimit-db.js';
 import { MapKitTokenIssuer } from '../modules/maps/mapkit.js';
+import { OAuthService } from '../modules/auth/oauth/service.js';
 import type { GuardConfig } from './guard.js';
 
 export interface App {
@@ -21,6 +22,7 @@ export interface App {
   documents: DocumentService;
   /** Absent until the Apple MapKit keys are configured. */
   mapkit: MapKitTokenIssuer | null;
+  oauth: OAuthService;
   cfg: GuardConfig;
   hsts: boolean;
   secureCookies: boolean;
@@ -39,6 +41,10 @@ async function build(): Promise<App> {
   const auth = new AuthService({ db, pepper: env.pepper });
   const documents = new DocumentService(db, env.storageSecret);
   const mapkit = env.mapkit ? new MapKitTokenIssuer(env.mapkit) : null;
+  const oauth = new OAuthService(db, {
+    credentials: env.oauth,
+    publicOrigin: env.publicOrigin,
+  });
 
   const cfg: GuardConfig = {
     allowedOrigins: env.allowedOrigins,
@@ -57,7 +63,7 @@ async function build(): Promise<App> {
   };
 
   return {
-    env, db, auth, documents, mapkit, cfg,
+    env, db, auth, documents, mapkit, oauth, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,
   };

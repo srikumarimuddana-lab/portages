@@ -190,6 +190,38 @@ export class AuthService {
     );
   }
 
+  /**
+   * Issues a session for a user who has ALREADY been authenticated by some
+   * other means — currently only the OAuth callback, after it has verified a
+   * provider id_token and applied the linking rules.
+   *
+   * This method performs no authentication of its own. Calling it is an
+   * assertion that the caller has established identity; there is deliberately
+   * no path from an HTTP route to here without going through a verifier.
+   */
+  async createSessionForAuthenticatedUser(
+    userId: string,
+    ctx: { ip?: string | undefined; userAgent?: string | undefined } = {},
+  ): Promise<SessionIssued> {
+    const now = this.#now();
+    return this.#db.transaction(async (tx) => {
+      const found = await tx.query<{ status: string }>(
+        'SELECT status FROM users WHERE id = $1',
+        [userId],
+      );
+      const user = found.rows[0];
+      if (!user || user.status !== 'active') {
+        throw unauthorized('This account is not available.');
+      }
+      return this.#issueSession(
+        tx,
+        userId,
+        { email: '', password: '', ip: ctx.ip, userAgent: ctx.userAgent },
+        now,
+      );
+    });
+  }
+
   async #issueSession(tx: Sql, userId: string, input: SignupInput, now: Date): Promise<SessionIssued> {
     const m = createSessionMaterial(now);
     await tx.query(

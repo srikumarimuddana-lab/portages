@@ -21,6 +21,10 @@ export interface Env {
   trustProxy: boolean;
   /** Apple MapKit JS credentials. Optional: absent means the map is disabled. */
   mapkit?: { teamId: string; keyId: string; privateKeyPem: string };
+  /** OAuth client credentials per provider. A missing provider is disabled. */
+  oauth: Record<string, { clientId: string; clientSecret: string }>;
+  /** Public origin used for OAuth redirect URIs and post-login redirects. */
+  publicOrigin: string;
 }
 
 const MIN_SECRET_LEN = 32;
@@ -84,6 +88,33 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     errors.push('MAPKIT_PRIVATE_KEY must be the PKCS#8 PEM contents of the .p8 file');
   }
 
+  // OAuth: each provider is optional, but half-configured is always a
+  // mistake — a redirect URI that 500s is worse than a hidden button.
+  const oauth: Record<string, { clientId: string; clientSecret: string }> = {};
+  for (const provider of ['google', 'facebook'] as const) {
+    const idKey = `${provider.toUpperCase()}_CLIENT_ID`;
+    const secretKey = `${provider.toUpperCase()}_CLIENT_SECRET`;
+    const cid = source[idKey];
+    const secret = source[secretKey];
+    if (cid && secret) {
+      oauth[provider] = { clientId: cid, clientSecret: secret };
+    } else if (cid || secret) {
+      errors.push(`${idKey} and ${secretKey} must be set together`);
+    }
+  }
+
+  // The OAuth redirect_uri must be an exact, pre-registered absolute URL.
+  const publicOrigin = source['PUBLIC_ORIGIN'] ?? allowedOrigins[0] ?? '';
+  if (Object.keys(oauth).length > 0) {
+    if (!publicOrigin) {
+      errors.push('PUBLIC_ORIGIN is required when any OAuth provider is configured');
+    } else if (!/^https?:\/\/[a-z0-9.-]+(:\d+)?$/i.test(publicOrigin)) {
+      errors.push('PUBLIC_ORIGIN must be an origin such as https://portage.ca');
+    } else if (isProd && !publicOrigin.startsWith('https://')) {
+      errors.push('PUBLIC_ORIGIN must use https in production');
+    }
+  }
+
   if (errors.length) {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join('\n  - ')}`);
   }
@@ -99,6 +130,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     // Cookies are Secure everywhere except plain local development.
     secureCookies: isProd || source['FORCE_SECURE_COOKIES'] === 'true',
     trustProxy: source['TRUST_PROXY'] === 'true',
+    oauth,
+    publicOrigin,
     ...(mkPresent === 3
       ? { mapkit: { teamId: mkTeam!, keyId: mkKey!, privateKeyPem: mkPem!.replace(/\\n/g, '\n') } }
       : {}),

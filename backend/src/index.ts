@@ -17,6 +17,7 @@ import {
   deleteDocument,
 } from './http/routes/documents.js';
 import { mapkitToken } from './http/routes/maps.js';
+import { oauthStart, oauthCallback } from './http/routes/oauth.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -60,6 +61,18 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/api/auth/login', (req) => login(req, authDeps));
   route('POST', '/api/auth/logout', (req) => logout(req, authDeps));
   route('GET', '/api/auth/me', (req) => me(req, authDeps));
+
+  const oauthDeps = {
+    cfg: app.cfg,
+    oauth: app.oauth,
+    auth: app.auth,
+    secureCookies: app.secureCookies,
+    hsts: app.hsts,
+    appOrigin: app.env.publicOrigin || `http://localhost:${app.env.port}`,
+  };
+  route('GET', '/api/auth/oauth/:provider', (req, p) => oauthStart(req, p['provider']!, oauthDeps));
+  route('GET', '/api/auth/oauth/:provider/callback',
+    (req, p) => oauthCallback(req, p['provider']!, oauthDeps));
 
   route('GET', '/api/documents', (req) => listDocuments(req, docDeps));
   route('POST', '/api/documents', (req) => createUpload(req, docDeps));
