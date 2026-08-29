@@ -146,11 +146,18 @@ declare module 'node:crypto' {
 declare module 'node:crypto' {
   interface KeyObject {
     readonly asymmetricKeyType?: string;
-    export(opts: { type: string; format: string }): string | Buffer;
+    export(opts: { type?: string; format: string }): string | Buffer | object;
   }
   export function createPrivateKey(key: string | Buffer): KeyObject;
+  export function createPublicKey(
+    key: string | Buffer | { key: unknown; format: string },
+  ): KeyObject;
   export function createSign(alg: string): { update(d: string): { sign(key: KeyObject): Buffer } };
-  export function createVerify(alg: string): { update(d: string): { verify(key: KeyObject, sig: Buffer): boolean } };
+  export function createVerify(alg: string): {
+    update(d: string): {
+      verify(key: KeyObject | { key: KeyObject; dsaEncoding: string }, sig: Buffer): boolean;
+    };
+  };
   export function generateKeyPairSync(
     type: string,
     opts: Record<string, unknown>,
@@ -178,3 +185,22 @@ declare module 'node:http' {
 }
 
 declare function setTimeout(cb: (...a: unknown[]) => void, ms: number): unknown;
+
+/** fetch and URLSearchParams: Web globals provided by Node 18+ at runtime. */
+interface FetchResponse {
+  readonly ok: boolean;
+  readonly status: number;
+  json(): Promise<unknown>;
+}
+declare function fetch(
+  url: string,
+  init?: { headers?: Record<string, string> },
+): Promise<FetchResponse>;
+
+interface URLSearchParams {
+  toString(): string;
+  get(name: string): string | null;
+}
+declare const URLSearchParams: {
+  new (init?: Record<string, string>): URLSearchParams;
+};
