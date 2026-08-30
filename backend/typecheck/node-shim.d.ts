@@ -141,6 +141,7 @@ declare const URL: { new (url: string, base?: string): URL };
 
 declare module 'node:crypto' {
   export function randomUUID(): string;
+  export function randomInt(min: number, max: number): number;
 }
 
 declare module 'node:crypto' {

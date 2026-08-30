@@ -18,6 +18,10 @@ import {
 } from './http/routes/documents.js';
 import { mapkitToken } from './http/routes/maps.js';
 import { oauthStart, oauthCallback } from './http/routes/oauth.js';
+import {
+  requestEmailVerification, confirmEmailVerification,
+  requestPasswordReset, confirmPasswordReset,
+} from './http/routes/otp.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -70,6 +74,17 @@ async function buildRoutes(): Promise<void> {
     hsts: app.hsts,
     appOrigin: app.env.publicOrigin || `http://localhost:${app.env.port}`,
   };
+  const otpDeps = {
+    cfg: app.cfg,
+    flows: app.otpFlows,
+    hsts: app.hsts,
+    identifierLimiter: app.identifierLimiter,
+  };
+  route('POST', '/api/auth/verify-email/request', (req) => requestEmailVerification(req, otpDeps));
+  route('POST', '/api/auth/verify-email/confirm', (req) => confirmEmailVerification(req, otpDeps));
+  route('POST', '/api/auth/password-reset/request', (req) => requestPasswordReset(req, otpDeps));
+  route('POST', '/api/auth/password-reset/confirm', (req) => confirmPasswordReset(req, otpDeps));
+
   route('GET', '/api/auth/oauth/:provider', (req, p) => oauthStart(req, p['provider']!, oauthDeps));
   route('GET', '/api/auth/oauth/:provider/callback',
     (req, p) => oauthCallback(req, p['provider']!, oauthDeps));

@@ -14,6 +14,8 @@ import { DurableRateLimiter } from '../lib/ratelimit-db.js';
 import { MapKitTokenIssuer } from '../modules/maps/mapkit.js';
 import { OAuthService } from '../modules/auth/oauth/service.js';
 import { NotifyService } from '../modules/notify/service.js';
+import { OtpService } from '../modules/auth/otp/service.js';
+import { OtpFlows } from '../modules/auth/otp/flows.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
 import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
@@ -28,6 +30,9 @@ export interface App {
   mapkit: MapKitTokenIssuer | null;
   oauth: OAuthService;
   notify: NotifyService;
+  otpFlows: OtpFlows;
+  /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
+  identifierLimiter: DurableRateLimiter;
   cfg: GuardConfig;
   hsts: boolean;
   secureCookies: boolean;
@@ -70,6 +75,13 @@ async function build(): Promise<App> {
   );
   const notify = new NotifyService(db, [email, sms, new WhatsAppChannel()]);
 
+  const otp = new OtpService(db);
+  const otpFlows = new OtpFlows({ db, otp, notify, auth });
+  // Six digits is a million possibilities, so the per-IP bucket is not
+  // enough: an attacker rotating IPs must still be capped against ONE
+  // account. Tighter than the login limiter for the same reason.
+  const identifierLimiter = new DurableRateLimiter(db, 'otp-id', { windowMs: 15 * 60_000, max: 5 });
+
   const oauth = new OAuthService(db, {
     credentials: env.oauth,
     publicOrigin: env.publicOrigin,
@@ -92,7 +104,7 @@ async function build(): Promise<App> {
   };
 
   return {
-    env, db, auth, documents, mapkit, oauth, notify, cfg,
+    env, db, auth, documents, mapkit, oauth, notify, otpFlows, identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,
   };
