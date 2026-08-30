@@ -22,6 +22,10 @@ import {
   requestEmailVerification, confirmEmailVerification,
   requestPasswordReset, confirmPasswordReset,
 } from './http/routes/otp.js';
+import {
+  getListing, listMine, createListing, updateListing, transitionListing,
+  attestDescription, addPhoto, removePhoto, reorderPhotos,
+} from './http/routes/listings.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -88,6 +92,23 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/api/auth/oauth/:provider', (req, p) => oauthStart(req, p['provider']!, oauthDeps));
   route('GET', '/api/auth/oauth/:provider/callback',
     (req, p) => oauthCallback(req, p['provider']!, oauthDeps));
+
+  const listingDeps = { cfg: app.cfg, listings: app.listings, hsts: app.hsts };
+  // `/mine` is registered before `/:id`. Matching is first-wins, so the
+  // literal must come first or "mine" is read as a listing id.
+  route('GET', '/api/listings/mine', (req) => listMine(req, listingDeps));
+  route('POST', '/api/listings', (req) => createListing(req, listingDeps));
+  route('GET', '/api/listings/:id', (req, p) => getListing(req, p['id']!, listingDeps));
+  route('PATCH', '/api/listings/:id', (req, p) => updateListing(req, p['id']!, listingDeps));
+  route('POST', '/api/listings/:id/transition',
+    (req, p) => transitionListing(req, p['id']!, listingDeps));
+  route('POST', '/api/listings/:id/attest',
+    (req, p) => attestDescription(req, p['id']!, listingDeps));
+  route('POST', '/api/listings/:id/photos', (req, p) => addPhoto(req, p['id']!, listingDeps));
+  route('PUT', '/api/listings/:id/photos/order',
+    (req, p) => reorderPhotos(req, p['id']!, listingDeps));
+  route('DELETE', '/api/listings/:id/photos/:photoId',
+    (req, p) => removePhoto(req, p['id']!, p['photoId']!, listingDeps));
 
   route('GET', '/api/documents', (req) => listDocuments(req, docDeps));
   route('POST', '/api/documents', (req) => createUpload(req, docDeps));

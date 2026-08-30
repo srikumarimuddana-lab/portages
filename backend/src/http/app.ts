@@ -16,6 +16,7 @@ import { OAuthService } from '../modules/auth/oauth/service.js';
 import { NotifyService } from '../modules/notify/service.js';
 import { OtpService } from '../modules/auth/otp/service.js';
 import { OtpFlows } from '../modules/auth/otp/flows.js';
+import { ListingService } from '../modules/listings/service.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
 import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
@@ -31,6 +32,7 @@ export interface App {
   oauth: OAuthService;
   notify: NotifyService;
   otpFlows: OtpFlows;
+  listings: ListingService;
   /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
   identifierLimiter: DurableRateLimiter;
   cfg: GuardConfig;
@@ -50,6 +52,9 @@ async function build(): Promise<App> {
   const db = await createPool(env.databaseUrl);
   const auth = new AuthService({ db, pepper: env.pepper });
   const documents = new DocumentService(db, env.storageSecret);
+  // Shares the storage secret: listing photos and locker documents are both
+  // direct-to-storage uploads signed the same way.
+  const listings = new ListingService(db, env.storageSecret);
   const mapkit = env.mapkit ? new MapKitTokenIssuer(env.mapkit) : null;
   // A channel is only live when BOTH the AWS credentials and its own sender
   // identity are configured; otherwise it reports itself unconfigured and the
@@ -104,7 +109,8 @@ async function build(): Promise<App> {
   };
 
   return {
-    env, db, auth, documents, mapkit, oauth, notify, otpFlows, identifierLimiter, cfg,
+    env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
+    identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,
   };
