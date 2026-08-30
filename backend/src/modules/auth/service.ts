@@ -35,6 +35,17 @@ export interface SessionIssued {
   expiresAt: Date;
 }
 
+export const USER_ROLES = ['user', 'staff', 'admin'] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
+export interface ResolvedSession {
+  userId: string;
+  sessionId: string;
+  csrfHash: Buffer;
+  /** Read fresh on every request, so a demotion takes effect at once. */
+  role: UserRole;
+}
+
 /** Minimum viable password policy: length over composition rules. */
 export const MIN_PASSWORD_LENGTH = 12;
 const MAX_PASSWORD_LENGTH = 256;
@@ -142,19 +153,33 @@ export class AuthService {
     });
   }
 
-  /** Resolves a presented session token to a user, sliding the idle window. */
-  async resolveSession(token: string): Promise<{ userId: string; sessionId: string; csrfHash: Buffer } | null> {
+  /**
+   * Resolves a presented session token to a user, sliding the idle window.
+   *
+   * The join onto `users` does two jobs. It carries the role, so authorization
+   * costs no extra query — and it re-reads `status` on every request, so
+   * suspending an account takes effect immediately. Without that, suspension
+   * would only stop the next sign-in: the abusive session already in hand
+   * would keep working for up to the absolute session lifetime, which is the
+   * entire window during which suspending someone actually matters.
+   */
+  async resolveSession(token: string): Promise<ResolvedSession | null> {
     const now = this.#now();
     const res = await this.#db.query<{
       id: string; user_id: string; csrf_hash: Buffer;
       idle_expires_at: Date; absolute_expires_at: Date; revoked_at: Date | null;
+      role: UserRole; status: string;
     }>(
-      `SELECT id, user_id, csrf_hash, idle_expires_at, absolute_expires_at, revoked_at
-         FROM sessions WHERE token_hash = $1`,
+      `SELECT s.id, s.user_id, s.csrf_hash, s.idle_expires_at,
+              s.absolute_expires_at, s.revoked_at, u.role, u.status
+         FROM sessions s
+         JOIN users u ON u.id = s.user_id
+        WHERE s.token_hash = $1`,
       [hashToken(token)],
     );
     const row = res.rows[0];
     if (!row) return null;
+    if (row.status !== 'active') return null;
 
     const stored: StoredSession = {
       id: row.id,
@@ -171,7 +196,7 @@ export class AuthService {
       'UPDATE sessions SET last_seen_at = $2, idle_expires_at = $3 WHERE id = $1',
       [row.id, now, verdict.renewIdleTo],
     );
-    return { userId: row.user_id, sessionId: row.id, csrfHash: row.csrf_hash };
+    return { userId: row.user_id, sessionId: row.id, csrfHash: row.csrf_hash, role: row.role };
   }
 
   async logout(sessionId: string): Promise<void> {
