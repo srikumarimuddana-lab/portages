@@ -93,17 +93,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Deliberately narrow: real key material, not anything that merely
-      # mentions the word "secret". A noisy check gets ignored.
+      # The scan lives in a script so a contributor can run the same check
+      # locally before pushing, rather than discovering it in CI.
       - name: Scan for key material
-        run: |
-          if git grep -nIE \
-            -e '\-\-\-\-\-BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY\-\-\-\-\-' \
-            -e 'AKIA[0-9A-Z]{16}' \
-            -e 'sk-ant-[A-Za-z0-9_-]{20,}' \
-            -e 'ghp_[A-Za-z0-9]{36}' \
-            -- . ':(exclude)*.example' ':(exclude)**/typecheck/**'; then
-            echo "::error::Possible credential committed. Remove it and rotate the key."
-            exit 1
-          fi
-          echo "No key material found."
+        run: ./scripts/scan-secrets.sh
