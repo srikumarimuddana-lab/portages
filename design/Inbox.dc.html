@@ -1,0 +1,194 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800;900&display=swap">
+  <style>
+    body { margin: 0; font-family: "Golos Text", system-ui, sans-serif; color: #0b0d12; background: #fafbfe; }
+    a { color: #356dbe; text-decoration: none; }
+    a:hover { color: #24528f; }
+    h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+    p { margin: 0; }
+    svg { display: block; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 1280px; height: 820px; display: flex; background: #fafbfe; font-family: 'Golos Text', system-ui, sans-serif;">
+
+  <!-- ── thread list ───────────────────────────────────────────────── -->
+  <div style="width: 380px; flex-shrink: 0; display: flex; flex-direction: column; background: #ffffff; border-right: 1px solid #e6e8ee;">
+    <div style="display: flex; flex-direction: column; gap: 14px; padding: 22px 20px 14px 20px; border-bottom: 1px solid #eef0f4;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <h1 style="font-size: 20px;">Messages</h1>
+        <span style="padding: 3px 10px; border-radius: 999px; background: {{accent}}; color: #ffffff; font-size: 12px; font-weight: 800;">12</span>
+      </div>
+      <div style="display: flex; gap: 3px; padding: 4px; background: #f8f9fb; border: 1px solid #e6e8ee; border-radius: 999px;">
+        <sc-for list="{{tabs}}" as="t" hint-placeholder-count="3">
+          <button onClick="{{t.pick}}" style="{{t.style}}">{{t.label}}</button>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; overflow: hidden;">
+      <sc-for list="{{threads}}" as="t" hint-placeholder-count="5">
+        <div onClick="{{t.pick}}" style="{{t.rowStyle}}">
+          <div style="{{t.avatarStyle}}">{{t.initials}}</div>
+          <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0;">
+            <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px;">
+              <span style="{{t.nameStyle}}">{{t.name}}</span>
+              <span style="font-size: 11px; color: #9aa4b5; flex-shrink: 0;">{{t.when}}</span>
+            </div>
+            <span style="font-size: 12px; font-weight: 600; color: #7b8698;">{{t.listing}}</span>
+            <span style="{{t.previewStyle}}">{{t.preview}}</span>
+          </div>
+          <sc-if value="{{t.unread}}" hint-placeholder-val="{{true}}">
+            <div style="width: 9px; height: 9px; border-radius: 999px; background: {{accent}}; flex-shrink: 0; margin-top: 6px;"></div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- ── conversation ──────────────────────────────────────────────── -->
+  <div style="flex-grow: 1; display: flex; flex-direction: column; min-width: 0;">
+
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 18px 26px; background: #ffffff; border-bottom: 1px solid #e6e8ee;">
+      <div style="display: flex; align-items: center; gap: 13px;">
+        <div style="width: 42px; height: 42px; border-radius: 999px; background: #eaf1fb; color: #24528f; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 800;">DR</div>
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-size: 16px; font-weight: 800;">Daniel R.</span>
+          <span style="font-size: 12px; color: #7b8698;">About 2100 Victoria Ave · $1,450/mo</span>
+        </div>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button style="padding: 9px 15px; border-radius: 999px; border: 1px solid #dde1e9; background: #ffffff; color: #3c4454; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;">View listing</button>
+        <button style="padding: 9px 15px; border-radius: 999px; border: 1px solid #dde1e9; background: #ffffff; color: #5b6575; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;">Archive</button>
+        <button style="width: 36px; height: 36px; border-radius: 999px; border: 1px solid #dde1e9; background: #ffffff; color: #9aa4b5; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 14px; padding: 24px 26px; overflow: hidden;">
+      <sc-for list="{{messages}}" as="m" hint-placeholder-count="5">
+        <div style="{{m.rowStyle}}">
+          <div style="{{m.bubbleStyle}}">{{m.body}}</div>
+          <sc-if value="{{m.flagged}}" hint-placeholder-val="{{false}}">
+            <!-- The in-app warning that accompanies a delivered-but-flagged
+                 message. Its email carries no preview at all. -->
+            <div style="display: flex; gap: 9px; max-width: 520px; margin-top: 7px; padding: 11px 13px; border-radius: 14px; background: oklch(0.96 0.035 75);">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.5 0.12 60)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px;"><path d="M12 2 4 6v6c0 5 3.4 9.1 8 10 4.6-.9 8-5 8-10V6z"/></svg>
+              <p style="font-size: 12px; line-height: 1.5; color: oklch(0.42 0.09 60);">Take care with this message. Portage never asks for a deposit before a viewing, and payments arranged off the platform have no protection.</p>
+            </div>
+          </sc-if>
+          <span style="{{m.timeStyle}}">{{m.when}}</span>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px; padding: 16px 26px 20px 26px; background: #ffffff; border-top: 1px solid #e6e8ee;">
+      <div style="display: flex; align-items: flex-end; gap: 10px;">
+        <div style="flex-grow: 1; min-height: 46px; padding: 13px 18px; border-radius: 23px; border: 1px solid #dde1e9; background: #fafbfe; color: #9aa4b5; font-size: 14px;">Write a reply…</div>
+        <button style="width: 46px; height: 46px; flex-shrink: 0; border-radius: 999px; border: none; background: {{accent}}; color: #ffffff; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 14-7-5 14-2.5-5.5z"/></svg>
+        </button>
+      </div>
+      <p style="font-size: 11px; color: #9aa4b5; padding-left: 4px;">Keep the conversation here. Never send a deposit before you have seen the place in person.</p>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "accent": {"editor": "color", "default": "#356dbe", "options": ["#356dbe", "#2f6f5e", "#8a4b8f", "#b4542a"], "section": "Theme"},
+  "$preview": {"width": 1280, "height": 820}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tab: 'all', open: 0 };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#356dbe';
+
+    const tabs = [
+      { id: 'all', label: 'All' },
+      { id: 'unread', label: 'Unread' },
+      { id: 'archived', label: 'Archived' },
+    ].map((t) => ({
+      ...t,
+      pick: () => this.setState({ tab: t.id }),
+      style: 'flex-grow: 1; padding: 7px 12px; font-family: inherit; font-size: 13px;'
+        + ' font-weight: 600; cursor: pointer; border: none; border-radius: 999px;'
+        + (this.state.tab === t.id ? ' background: #ffffff; color: #12151c; box-shadow: 0 2px 10px rgba(16,24,40,0.07);'
+                                   : ' background: transparent; color: #5b6575;'),
+    }));
+
+    const raw = [
+      { initials: 'DR', name: 'Daniel R.', listing: '2100 Victoria Ave',
+        preview: 'Would Saturday afternoon work for a viewing?', when: '2h', unread: true },
+      { initials: 'PK', name: 'Priya K.', listing: '2100 Victoria Ave',
+        preview: 'Is the parking spot included in the rent?', when: '5h', unread: true },
+      { initials: 'MT', name: 'Marcus T.', listing: '58 Angus Cres',
+        preview: 'Thanks — we will take it. What is next?', when: 'Yesterday', unread: false },
+      { initials: 'SL', name: 'Sofia L.', listing: '58 Angus Cres',
+        preview: 'Are dogs allowed? We have a small terrier.', when: '2 days', unread: false },
+      { initials: 'JW', name: 'Jordan W.', listing: '2100 Victoria Ave',
+        preview: 'Message not delivered', when: '3 days', unread: false, blocked: true },
+    ];
+
+    const threads = raw.map((t, i) => {
+      const open = this.state.open === i;
+      return {
+        ...t,
+        pick: () => this.setState({ open: i }),
+        rowStyle: 'display: flex; gap: 12px; padding: 15px 20px; cursor: pointer;'
+          + ' border-bottom: 1px solid #f8f9fb;'
+          + (open ? ' background: #eaf1fb;' : ' background: transparent;'),
+        avatarStyle: 'width: 40px; height: 40px; flex-shrink: 0; border-radius: 999px;'
+          + ' display: flex; align-items: center; justify-content: center;'
+          + ' font-size: 13px; font-weight: 800;'
+          + (open ? ' background: #ffffff; color: #24528f;' : ' background: #eef0f4; color: #5b6575;'),
+        nameStyle: 'font-size: 14px; color: #12151c;'
+          + (t.unread ? ' font-weight: 800;' : ' font-weight: 600;'),
+        // A blocked message shows the owner that something was withheld,
+        // without showing them its contents.
+        previewStyle: 'font-size: 12px; line-height: 1.35; overflow: hidden;'
+          + (t.blocked ? ' color: #9aa4b5; font-style: italic;' : ' color: #7b8698;'),
+      };
+    });
+
+    const bubble = (mine) =>
+      'max-width: 520px; padding: 13px 17px; font-size: 14px; line-height: 1.55;'
+      + (mine
+        ? ' background: ' + accent + '; color: #ffffff; border-radius: 18px 18px 6px 18px;'
+        : ' background: #ffffff; color: #12151c; border: 1px solid #e6e8ee;'
+          + ' border-radius: 18px 18px 18px 6px;');
+
+    const messages = [
+      { body: 'Hi — is the Victoria Ave place still available for October?', mine: false, when: 'Tuesday 09:14', flagged: false },
+      { body: 'It is. Heat and water are included, and there is a heated garage stall with a block-heater plug.', mine: true, when: 'Tuesday 09:40', flagged: false },
+      { body: 'That is great. Is the garage a separate charge?', mine: false, when: 'Tuesday 10:02', flagged: false },
+      { body: 'No, it is included. Happy to show you the unit this week.', mine: true, when: 'Tuesday 10:15', flagged: false },
+      { body: 'Would Saturday afternoon work? My number is 306-555-0134 if that is easier.', mine: false, when: '2 hours ago', flagged: true },
+    ].map((m) => ({
+      ...m,
+      rowStyle: 'display: flex; flex-direction: column;'
+        + (m.mine ? ' align-items: flex-end;' : ' align-items: flex-start;'),
+      bubbleStyle: bubble(m.mine),
+      timeStyle: 'font-size: 11px; color: #9aa4b5; margin-top: 5px;'
+        + (m.mine ? ' text-align: right;' : ''),
+    }));
+
+    return { accent, tabs, threads, messages };
+  }
+}
+</script>
+</body>
+</html>

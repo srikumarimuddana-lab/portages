@@ -1,20 +1,48 @@
 # Design canvas
 
-Source for the Portage listing-detail design canvas.
+Source for the Portage product design canvas.
 
 **Live canvas:** https://claude.ai/code/artifact/23bf3660-ffb7-4fe5-8499-968025291eb3
 
 ## Files
 
+Nine artboards across three canvas pages.
+
+### Public
+
 | File | What it is |
 |---|---|
 | `Main.dc.html` | Listing detail, desktop (1280px). Three live tabs. |
 | `Mobile.dc.html` | The same page at phone width (390px). |
+| `Search.dc.html` | Search results — filter bar, result grid, map rail with price bubbles. |
+
+### Owner
+
+| File | What it is |
+|---|---|
+| `OwnerListings.dc.html` | Your listings, with per-listing performance and publish blockers. |
+| `Inbox.dc.html` | Messages — thread list and conversation, including the blocked-message case. |
+
+### Admin
+
+| File | What it is |
+|---|---|
+| `AdminQueue.dc.html` | Moderation queue, ordered by risk then age. |
+| `AdminReview.dc.html` | Single-item decision screen; toggles between listing and message review. |
+| `AdminOps.dc.html` | Supply funnel, health tiles, moderation rates, audit log, kill switches. |
+
+### Shared
+
+| File | What it is |
+|---|---|
 | `Icon.dc.html` | The stroke-icon set — 25 glyphs on a 24px grid, one weight. |
-| `canvas.json` | Artboard layout, plus the three notes on the canvas. |
+| `canvas.json` | Layout for all nine, three pages, and the canvas notes. |
+
+The admin screens are designed against `analysis/10-admin-dashboard.md`, which
+sizes the moderation load and lists what is missing from the backend.
 
 The seeded `portage-listing-detail.html` is **not committed**: it is 2.5 MB of
-editor payload regenerated from these four files in one command, and a
+editor payload regenerated from these source files in one command, and a
 generated artifact that large has no business in the history.
 
 ## Design system
@@ -41,8 +69,11 @@ as one family rather than a paintbox.
 node "<design skill base>/seed-canvas.mjs" \
   --template "<design skill base>/payload.template.html" \
   --out portage-listing-detail.html \
-  --title "Portage Listing Detail" \
-  --artboard Main.dc.html --artboard Mobile.dc.html --artboard Icon.dc.html \
+  --title "Portage Product Design" \
+  --artboard Main.dc.html --artboard Mobile.dc.html --artboard Search.dc.html \
+  --artboard OwnerListings.dc.html --artboard Inbox.dc.html \
+  --artboard AdminQueue.dc.html --artboard AdminReview.dc.html \
+  --artboard AdminOps.dc.html --artboard Icon.dc.html \
   --canvas canvas.json
 ```
 

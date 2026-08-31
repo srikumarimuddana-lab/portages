@@ -1,56 +1,95 @@
 {
+  "pages": [
+    { "id": "page-1", "name": "Public" },
+    { "id": "page-2", "name": "Owner" },
+    { "id": "page-3", "name": "Admin" }
+  ],
   "artboards": [
-    {
-      "file": "Main.dc.html",
-      "x": 0,
-      "y": 0,
-      "w": 1280,
-      "h": 1900,
-      "title": "Listing detail \u2014 desktop",
-      "is_interactive": true
-    },
-    {
-      "file": "Mobile.dc.html",
-      "x": 1400,
-      "y": 0,
-      "w": 390,
-      "h": 1580,
-      "title": "Listing detail \u2014 phone",
-      "is_interactive": true
-    },
-    {
-      "file": "Icon.dc.html",
-      "x": 1400,
-      "y": 1720,
-      "w": 96,
-      "h": 96,
-      "title": "Icon"
-    }
+    { "file": "Main.dc.html", "page": "page-1", "x": 0, "y": 0, "w": 1280, "h": 1900, "title": "Listing detail — desktop", "is_interactive": true },
+    { "file": "Mobile.dc.html", "page": "page-1", "x": 1400, "y": 0, "w": 390, "h": 1580, "title": "Listing detail — phone", "is_interactive": true },
+    { "file": "Search.dc.html", "page": "page-1", "x": 1910, "y": 0, "w": 1440, "h": 1000, "title": "Search results", "is_interactive": true },
+    { "file": "Icon.dc.html", "page": "page-1", "x": 1400, "y": 1720, "w": 96, "h": 96, "title": "Icon" },
+
+    { "file": "OwnerListings.dc.html", "page": "page-2", "x": 0, "y": 0, "w": 1280, "h": 700, "title": "Your listings", "is_interactive": true },
+    { "file": "Inbox.dc.html", "page": "page-2", "x": 0, "y": 820, "w": 1280, "h": 820, "title": "Messages", "is_interactive": true },
+
+    { "file": "AdminQueue.dc.html", "page": "page-3", "x": 0, "y": 0, "w": 1440, "h": 820, "title": "Moderation queue", "is_interactive": true },
+    { "file": "AdminReview.dc.html", "page": "page-3", "x": 1560, "y": 0, "w": 1440, "h": 800, "title": "Review — listing & message", "is_interactive": true },
+    { "file": "AdminOps.dc.html", "page": "page-3", "x": 0, "y": 940, "w": 1440, "h": 1080, "title": "Ops & kill switches", "is_interactive": true }
   ],
   "annotations": [
     {
       "id": "hr-adaptation",
+      "page": "page-1",
       "x": -360,
       "y": 0,
       "w": 300,
-      "text": "One field from the 99acres reference is deliberately absent.\n\n99acres shows \"Available For: Family, Bachelors (Men Only)\". That is normal in India and unlawful in Canada \u2014 the Saskatchewan Human Rights Code prohibits refusing housing on family status, sex, marital status, age or source of income.\n\nThe Owner & terms tab carries an \"Everyone may apply\" panel in its place. Portage should have no tenant-preference field anywhere: not on the listing form, not as a search filter."
+      "text": "One field from the 99acres reference is deliberately absent.\n\n99acres shows \"Available For: Family, Bachelors (Men Only)\". That is normal in India and unlawful in Canada — the Saskatchewan Human Rights Code prohibits refusing housing on family status, sex, marital status, age or source of income.\n\nThe Owner & terms tab carries an \"Everyone may apply\" panel in its place. Portage should have no tenant-preference field anywhere: not on the listing form, not as a search filter."
     },
     {
       "id": "grounding",
+      "page": "page-1",
       "x": -360,
       "y": 340,
       "w": 300,
-      "text": "Everything shown maps to something the backend already returns.\n\nAmenity chips come from the AMENITIES allowlist (heated garage, block heater plug, heat included). Neighbourhood scores are the four kinds in neighbourhood_scores: transit, schools, quiet, amenities. The safety line beside the message button is the same warning modules/messaging applies to a flagged message.\n\nThe map panel says Apple renders and the pin comes from City of Regina open data, which is the licensing split the gazetteer exists for."
+      "text": "Everything shown maps to something the backend already returns.\n\nAmenity chips come from the AMENITIES allowlist (heated garage, block heater plug, heat included). Neighbourhood scores are the four kinds in neighbourhood_scores. The safety line beside the message button is the same warning modules/messaging applies to a flagged message.\n\nSearch autocomplete has no \"powered by\" line because it is our own gazetteer, not a geocoding API."
     },
     {
       "id": "still-open",
+      "page": "page-1",
       "x": -360,
       "y": 700,
       "w": 300,
-      "text": "Placeholders, not decisions:\n\n\u00b7 Photos are blocked out \u2014 no real Regina imagery yet.\n\u00b7 Score values (78 / 84 / 91 / 72) are illustrative; the real ones come from GTFS and open data.\n\u00b7 \"Owner active 2 days ago\" needs a last-seen field that does not exist yet.\n\u00b7 The gallery is four thumbnails; a lightbox is not designed."
+      "text": "Placeholders, not decisions:\n\n· Photos are blocked out — no real Regina imagery yet.\n· Score values are illustrative; the real ones come from GTFS and open data.\n· \"Owner active 2 days ago\" needs a last-seen field that does not exist.\n· Map pins are positioned by hand; in the product they come from the bbox query."
+    },
+    {
+      "id": "owner-notes",
+      "page": "page-2",
+      "x": -360,
+      "y": 0,
+      "w": 300,
+      "text": "Two things here are doing real work.\n\nThe per-listing stats let an owner tell a quiet listing from a broken one: views without enquiries is a price problem, and neither is a photo problem.\n\nThe draft row says \"Add a photo to publish\" — which is exactly what publishBlockers() would return, said before they hit submit rather than after. And expiry is surfaced six days out, because a listing that vanishes without warning is how owners stop trusting the site."
+    },
+    {
+      "id": "inbox-notes",
+      "page": "page-2",
+      "x": -360,
+      "y": 430,
+      "w": 300,
+      "text": "The last thread in the list reads \"Message not delivered\", greyed and italic.\n\nThat is a BLOCKED message: the owner is told something was withheld, without being shown its contents. The sender was told it did not send. Neither sees the other's side.\n\nThe amber panel under the final message is the flagged-but-delivered case. Its notification email carries no preview at all — see analysis/10, §1."
+    },
+    {
+      "id": "admin-blocker",
+      "page": "page-3",
+      "x": -380,
+      "y": 0,
+      "w": 320,
+      "text": "WHY THIS SCREEN EXISTS FIRST\n\nmoderation_queue has two producers — listings on submit, messaging on flag or block — and zero readers. Approving a listing is possible today, but there is no way to find out which listings are waiting; you would have to already know the id.\n\nSince pending_review → live is staff-only by design, that means no listing currently reaches the public unless someone hand-carries an id to a curl command.\n\nFull analysis: analysis/10-admin-dashboard.md"
+    },
+    {
+      "id": "admin-sizing",
+      "page": "page-3",
+      "x": -380,
+      "y": 420,
+      "w": 320,
+      "text": "SIZED FOR TWO TO FIVE DECISIONS A DAY\n\nRegina year one: ~30–60 new listings a month, ~800–2,000 messages, 2–4% of them flagged. That is 50–140 queue items a month.\n\nSo: no bulk actions, no assignment, no SLA dashboards, no separate mobile admin. Each item gets opened and read.\n\nThe failure mode at this volume is not throughput — it is a queue nobody opened for a week. That is why oldest-item age is a headline tile and queue depth is not."
+    },
+    {
+      "id": "admin-release",
+      "page": "page-3",
+      "x": 1560,
+      "y": -190,
+      "w": 340,
+      "text": "RELEASE IS NOT A NICE-TO-HAVE\n\nmodules/messaging blocks a message before delivery. The recipient never sees it and is never told — right for a real scam, and it means an honest user who trips the heuristic is silently censored with no recourse.\n\nFour read paths filter on delivered_at IS NOT NULL. Zero read the withheld ones. Release is the other half of a decision already shipped."
+    },
+    {
+      "id": "admin-audit",
+      "page": "page-3",
+      "x": -380,
+      "y": 940,
+      "w": 320,
+      "text": "BUILD THE AUDIT WRITER FIRST\n\naudit_log exists with forbid_mutation() on UPDATE and DELETE, so a compromised app role cannot erase its tracks. It has never been written to.\n\nIt has to land before the first admin action ships, not after: a trail added later has no rows for the period before it — which is exactly the period where a young platform's judgement calls get questioned.\n\nKill switches need a table that does not exist at all. Migration 009 became ratelimit, not flags."
     }
   ],
-  "launch": {
-    "view": "canvas"
-  }
+  "launch": { "view": "canvas", "page": "page-3" }
 }

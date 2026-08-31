@@ -1,0 +1,288 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800;900&display=swap">
+  <style>
+    body { margin: 0; font-family: "Golos Text", system-ui, sans-serif; color: #0b0d12; background: #f4f5f8; }
+    a { color: #356dbe; text-decoration: none; }
+    a:hover { color: #24528f; }
+    h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+    p { margin: 0; }
+    svg { display: block; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; background: #f4f5f8; padding-bottom: 36px; font-family: 'Golos Text', system-ui, sans-serif;">
+
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 56px; background: #12151c;">
+    <div style="display: flex; align-items: center; gap: 18px;">
+      <span style="font-size: 15px; font-weight: 900; color: #ffffff;">Portage <span style="color: #7b8698; font-weight: 700;">staff</span></span>
+      <span style="font-size: 12px; color: #7b8698;">Queue › Review</span>
+    </div>
+    <!-- Two decision screens, one shape. Toggle to compare them. -->
+    <div style="display: flex; gap: 3px; padding: 3px; background: #24272f; border-radius: 8px;">
+      <sc-for list="{{kinds}}" as="k" hint-placeholder-count="2">
+        <button onClick="{{k.pick}}" style="{{k.style}}">{{k.label}}</button>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 16px; padding: 20px 28px 0 28px; align-items: flex-start;">
+
+    <!-- ── subject ─────────────────────────────────────────────────── -->
+    <div style="flex-grow: 1; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; overflow: hidden;">
+
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px 20px; border-bottom: 1px solid #eef0f4;">
+        <h1 style="font-size: 16px;">{{subjectTitle}}</h1>
+        <span style="font-size: 12px; color: #7b8698; font-family: ui-monospace, Menlo, monospace;">{{subjectId}}</span>
+      </div>
+
+      <!-- LISTING: shown exactly as a renter would see it, so the decision
+           is made on the same evidence the public gets. -->
+      <sc-if value="{{isListing}}" hint-placeholder-val="{{true}}">
+      <div style="padding: 20px;">
+        <div style="display: flex; gap: 16px; margin-bottom: 18px;">
+          <div style="width: 220px; height: 148px; flex-shrink: 0; border-radius: 10px; background: linear-gradient(140deg,#f0e3e3,#e0c9c9);"></div>
+          <div style="display: flex; flex-direction: column; gap: 9px;">
+            <div style="display: flex; align-items: baseline; gap: 10px;">
+              <span style="font-size: 26px; font-weight: 900; letter-spacing: -0.02em;">$650</span>
+              <span style="font-size: 13px; font-weight: 600; color: #7b8698;">/month</span>
+              <span style="padding: 3px 10px; border-radius: 999px; background: oklch(0.95 0.045 75); color: oklch(0.44 0.125 75); font-size: 11px; font-weight: 800;">Well below market</span>
+            </div>
+            <span style="font-size: 15px; font-weight: 700;">SPACIOUS 2 BED AVAILABLE NOW!!!</span>
+            <span style="font-size: 13px; color: #7b8698;">4412 Rae Street, Regina SK · 2 bed · 1 bath · 810 sq ft</span>
+            <span style="font-size: 12px; color: #9aa4b5;">Submitted 11 hours ago by an owner who verified their email 2 days ago</span>
+          </div>
+        </div>
+
+        <div style="padding: 16px; border-radius: 10px; background: #fafbfe; border: 1px solid #eef0f4;">
+          <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">DESCRIPTION</span>
+          <p style="font-size: 14px; line-height: 1.6; color: #3c4454; margin-top: 8px;">Beautiful spacious 2 bedroom available immediately. Very cheap rent for quick tenant. Contact me directly at 306-555-0187 to arrange, I am currently working out of province so my associate will handle the keys.</p>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- MESSAGE: the thread in context, because the same sentence means
+           different things in message one and message ten. -->
+      <sc-if value="{{isMessage}}" hint-placeholder-val="{{false}}">
+      <div style="padding: 20px;">
+        <div style="display: flex; align-items: center; gap: 20px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid #eef0f4;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">FROM</span>
+            <span style="font-size: 13px; font-weight: 700;">Jordan W. · unverified</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">TO</span>
+            <span style="font-size: 13px; font-weight: 700;">Sarah M. · owner</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">THREAD AGE</span>
+            <span style="font-size: 13px; font-weight: 700;">1st message</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">VERDICT</span>
+            <span style="font-size: 13px; font-weight: 800; color: oklch(0.44 0.125 20);">Blocked — not delivered</span>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <sc-for list="{{thread}}" as="m" hint-placeholder-count="3">
+            <div style="{{m.style}}">{{m.body}}</div>
+          </sc-for>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 16px; padding: 14px; border-radius: 10px; background: oklch(0.96 0.03 250);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="oklch(0.44 0.125 250)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px;"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <p style="font-size: 12px; line-height: 1.55; color: oklch(0.38 0.09 250);">The recipient has not seen this and does not know it exists. If the block was wrong, <strong>Release</strong> delivers it and notifies them — that is the only way an honest sender gets their message through.</p>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+
+    <!-- ── decision rail ───────────────────────────────────────────── -->
+    <div style="width: 380px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px;">
+
+      <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; padding: 18px 20px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+          <h2 style="font-size: 14px;">Why it is here</h2>
+          <span style="{{scoreStyle}}">{{score}}</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 9px;">
+          <sc-for list="{{signals}}" as="s" hint-placeholder-count="3">
+            <div style="display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; border-radius: 9px; background: {{s.tint}};">
+              <span style="font-size: 13px; font-weight: 900; color: {{s.ink}}; width: 32px; flex-shrink: 0;">+{{s.weight}}</span>
+              <div style="display: flex; flex-direction: column; gap: 3px;">
+                <span style="font-size: 12px; font-weight: 700; color: {{s.ink}}; font-family: ui-monospace, Menlo, monospace;">{{s.name}}</span>
+                <span style="font-size: 11px; line-height: 1.4; color: #5b6575;">{{s.explain}}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; padding: 18px 20px;">
+        <h2 style="font-size: 14px; margin-bottom: 12px;">This account</h2>
+        <div style="display: flex; flex-direction: column; gap: 9px;">
+          <sc-for list="{{account}}" as="a" hint-placeholder-count="4">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 12px; color: #7b8698;">{{a.label}}</span>
+              <span style="font-size: 12px; font-weight: 700; color: {{a.ink}};">{{a.value}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <!-- The decision. Destructive on the left, reversible on the right,
+           and every one of these writes audit_log. -->
+      <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; padding: 18px 20px;">
+        <h2 style="font-size: 14px; margin-bottom: 13px;">Decide</h2>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <sc-for list="{{actions}}" as="a" hint-placeholder-count="3">
+            <button style="{{a.style}}">
+              <dc-import name="Icon" glyph="{{a.icon}}" size="{{16}}" hint-size="16px,16px"></dc-import>
+              {{a.label}}
+            </button>
+          </sc-for>
+        </div>
+        <div style="margin-top: 13px; padding-top: 13px; border-top: 1px solid #eef0f4;">
+          <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">REASON — SENT TO THE OWNER</span>
+          <div style="margin-top: 7px; padding: 11px 13px; border-radius: 9px; background: #fafbfe; border: 1px solid #e6e8ee; font-size: 12px; color: #9aa4b5;">Required when rejecting or asking for changes…</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9aa4b5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.4 9.1 8 10 4.6-.9 8-5 8-10V6z"/></svg>
+          <span style="font-size: 11px; color: #9aa4b5;">Recorded in the audit log as k.reddy · staff</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "accent": {"editor": "color", "default": "#356dbe", "options": ["#356dbe", "#2f6f5e", "#8a4b8f", "#b4542a"], "section": "Theme"},
+  "$preview": {"width": 1440, "height": 800}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { kind: 'listing' };
+  }
+
+  palette(hue) {
+    return { tint: 'oklch(0.95 0.045 ' + hue + ')', ink: 'oklch(0.44 0.125 ' + hue + ')' };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#356dbe';
+    const p = (h) => this.palette(h);
+    const GREEN = 155, AMBER = 75, VIOLET = 300, TEAL = 195, ROSE = 20;
+    const isListing = this.state.kind === 'listing';
+
+    const kinds = [
+      { id: 'listing', label: 'Listing review' },
+      { id: 'message', label: 'Message review' },
+    ].map((k) => ({
+      ...k,
+      pick: () => this.setState({ kind: k.id }),
+      style: 'padding: 6px 13px; font-family: inherit; font-size: 12px; font-weight: 600;'
+        + ' cursor: pointer; border: none; border-radius: 6px;'
+        + (this.state.kind === k.id ? ' background: #3c4454; color: #ffffff;'
+                                    : ' background: transparent; color: #9aa4b5;'),
+    }));
+
+    const btn = (bg, fg, border) =>
+      'display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;'
+      + ' padding: 11px 16px; border-radius: 9px; font-family: inherit; font-size: 13px;'
+      + ' font-weight: 700; cursor: pointer;'
+      + ' background: ' + bg + '; color: ' + fg + '; border: ' + border + ';';
+
+    const listingActions = [
+      { icon: 'home', label: 'Approve and publish',
+        style: btn(this.palette(GREEN).ink, '#ffffff', 'none') },
+      { icon: 'file', label: 'Request changes',
+        style: btn('#ffffff', '#3c4454', '1px solid #dde1e9') },
+      { icon: 'smoke', label: 'Reject',
+        style: btn('#ffffff', this.palette(ROSE).ink, '1px solid ' + this.palette(ROSE).tint) },
+    ];
+
+    const messageActions = [
+      { icon: 'bus', label: 'Release — deliver it',
+        style: btn(accent, '#ffffff', 'none') },
+      { icon: 'file', label: 'Uphold the block',
+        style: btn('#ffffff', '#3c4454', '1px solid #dde1e9') },
+      { icon: 'smoke', label: 'Uphold and suspend sender',
+        style: btn('#ffffff', this.palette(ROSE).ink, '1px solid ' + this.palette(ROSE).tint) },
+    ];
+
+    const listingSignals = [
+      { name: 'implausibly_low_price', weight: 25, ...p(AMBER),
+        explain: '$650 for a 2 bed is under the $400 suspicion floor for Regina rents.' },
+      { name: 'contact_phone_in_body', weight: 12, ...p(VIOLET),
+        explain: 'A phone number in the description moves the conversation off-platform.' },
+      { name: 'shouting_title', weight: 4, ...p(TEAL),
+        explain: 'The whole title is capitalised.' },
+    ];
+
+    const messageSignals = [
+      { name: 'payment_before_viewing', weight: 100, ...p(ROSE),
+        explain: 'Absolute — this blocks at any thread age. "wire the deposit" appeared in the body.' },
+      { name: 'absent_landlord_script', weight: 70, ...p(ROSE),
+        explain: 'Absolute. "I am currently out of the country" plus an off-platform contact.' },
+      { name: 'contact_details_phone', weight: 35, ...p(AMBER),
+        explain: 'First message in the thread, so contact-sharing is still scored.' },
+    ];
+
+    const score = isListing ? 41 : 205;
+    const scoreHue = score >= 100 ? ROSE : score >= 60 ? AMBER : VIOLET;
+    const st = this.palette(scoreHue);
+
+    return {
+      accent, kinds, isListing, isMessage: !isListing,
+      subjectTitle: isListing ? '4412 Rae Street · Cathedral' : 'Message from Jordan W.',
+      subjectId: isListing ? 'listing 9f3c…21ab' : 'message 4d7e…88c1',
+      score,
+      scoreStyle: 'padding: 4px 12px; border-radius: 7px; font-size: 14px; font-weight: 900;'
+        + ' background: ' + st.tint + '; color: ' + st.ink + ';',
+      signals: isListing ? listingSignals : messageSignals,
+      actions: isListing ? listingActions : messageActions,
+
+      account: isListing
+        ? [
+            { label: 'Member since', value: '2 days ago', ink: this.palette(AMBER).ink },
+            { label: 'Email verified', value: 'Yes', ink: '#12151c' },
+            { label: 'Listings posted', value: '1', ink: '#12151c' },
+            { label: 'Prior rejections', value: '0', ink: '#12151c' },
+          ]
+        : [
+            { label: 'Member since', value: '4 hours ago', ink: this.palette(ROSE).ink },
+            { label: 'Email verified', value: 'No', ink: this.palette(ROSE).ink },
+            { label: 'Messages sent', value: '14', ink: '#12151c' },
+            { label: 'Blocked before', value: '3', ink: this.palette(ROSE).ink },
+          ],
+
+      thread: [
+        { body: 'Hi, is this still available?', mine: false },
+        { body: 'Yes it is — happy to show you around this week.', mine: true },
+        { body: 'I am currently out of the country for work so my agent will handle the keys. Please wire the deposit and first month and I will courier them over.', mine: false, blocked: true },
+      ].map((m) => ({
+        ...m,
+        style: 'max-width: 560px; padding: 12px 15px; font-size: 13px; line-height: 1.55;'
+          + (m.blocked
+            ? ' background: ' + this.palette(ROSE).tint + '; color: #12151c;'
+              + ' border: 1px solid ' + this.palette(ROSE).ink + '; border-radius: 12px;'
+            : m.mine
+              ? ' background: #eef0f4; color: #3c4454; border-radius: 12px; align-self: flex-end;'
+              : ' background: #ffffff; color: #12151c; border: 1px solid #e6e8ee; border-radius: 12px;'),
+      })),
+    };
+  }
+}
+</script>
+</body>
+</html>
