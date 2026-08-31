@@ -48,6 +48,21 @@ export interface Env {
     /** CDN or public bucket domain used for read URLs. */
     publicBaseUrl?: string | undefined;
   };
+  /**
+   * Vercel AI Gateway. Absent means every AI feature reports itself
+   * unavailable and the site works exactly as it does today — the same
+   * "absent is a coherent state" rule the storage and channel blocks follow.
+   *
+   * Credentials are all-or-nothing in the usual way, with one twist: the
+   * Gateway accepts EITHER an explicit key or the OIDC token Vercel
+   * provisions for a linked project, so either alone is enough.
+   */
+  ai?: {
+    apiKey?: string | undefined;
+    baseUrl?: string | undefined;
+    /** Per task, so a cheap model can serve moderation and a strong one drafting. */
+    models: { chatSearch: string; listingBuilder: string; moderation: string };
+  };
 }
 
 const MIN_SECRET_LEN = 32;
@@ -191,6 +206,30 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join('\n  - ')}`);
   }
 
+  // ── AI ────────────────────────────────────────────────────────────────
+  //
+  // Model IDs are configuration, not code, because the Gateway makes them
+  // interchangeable and because switching model at 3am must not need a build.
+  // The defaults follow analysis/06: a cheap fast model for the high-volume
+  // classification paths, a strong one where the output is read by a person.
+  //
+  // VERCEL_OIDC_TOKEN is read at REQUEST time, not here — it is short-lived
+  // and the platform rotates it, so capturing it at boot produces 401s that a
+  // redeploy appears to fix.
+  const aiKey = source['AI_GATEWAY_API_KEY'];
+  const hasOidc = Boolean(source['VERCEL_OIDC_TOKEN']);
+  const ai = (aiKey || hasOidc)
+    ? {
+        ...(aiKey ? { apiKey: aiKey } : {}),
+        ...(source['AI_GATEWAY_BASE_URL'] ? { baseUrl: source['AI_GATEWAY_BASE_URL'] } : {}),
+        models: {
+          chatSearch: source['AI_MODEL_CHAT_SEARCH'] ?? 'anthropic/claude-haiku-4-5',
+          listingBuilder: source['AI_MODEL_LISTING_BUILDER'] ?? 'anthropic/claude-opus-5',
+          moderation: source['AI_MODEL_MODERATION'] ?? 'anthropic/claude-haiku-4-5',
+        },
+      }
+    : undefined;
+
   return Object.freeze({
     nodeEnv,
     port,
@@ -206,6 +245,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     publicOrigin,
     ...(aws ? { aws } : {}),
     ...(storage ? { storage } : {}),
+    ...(ai ? { ai } : {}),
     ...(mkPresent === 3
       ? { mapkit: { teamId: mkTeam!, keyId: mkKey!, privateKeyPem: mkPem!.replace(/\\n/g, '\n') } }
       : {}),

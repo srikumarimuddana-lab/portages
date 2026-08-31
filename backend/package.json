@@ -14,7 +14,8 @@
     "start": "node dist/index.js",
     "test": "node --experimental-strip-types --import ./test/register-hook.mjs --test test/**/*.test.ts",
     "typecheck:offline": "tsc -p tsconfig.check.json",
-    "seed:regina": "node --experimental-strip-types --import ./test/register-hook.mjs src/scripts/seed-regina.ts"
+    "seed:regina": "node --experimental-strip-types --import ./test/register-hook.mjs src/scripts/seed-regina.ts",
+    "typecheck:shim": "tsc -p tsconfig.shim.json"
   },
   "dependencies": {
     "pg": "^8.13.1"

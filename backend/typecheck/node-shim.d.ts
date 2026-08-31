@@ -124,6 +124,7 @@ declare const Request: {
 };
 
 interface Response {
+  readonly ok: boolean;
   readonly status: number;
   readonly headers: Headers;
   json(): Promise<unknown>;
@@ -200,22 +201,39 @@ declare module 'node:http' {
 }
 
 declare function setTimeout(cb: (...a: unknown[]) => void, ms: number): unknown;
+declare function clearTimeout(handle: unknown): void;
 
-/** fetch and URLSearchParams: Web globals provided by Node 18+ at runtime. */
-interface FetchResponse {
-  readonly ok: boolean;
-  readonly status: number;
-  json(): Promise<unknown>;
+/**
+ * AbortController / AbortSignal: Web globals since Node 15, used to bound
+ * model calls so a hung provider cannot hold a request open.
+ */
+interface AbortSignal {
+  readonly aborted: boolean;
+  addEventListener(type: 'abort', cb: () => void): void;
+  removeEventListener(type: 'abort', cb: () => void): void;
 }
+declare const AbortSignal: { new (): AbortSignal };
+interface AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: unknown): void;
+}
+declare const AbortController: { new (): AbortController };
+
+/**
+ * fetch and URLSearchParams: Web globals provided by Node 18+ at runtime.
+ *
+ * fetch resolves to the SAME `Response` declared above, not a parallel
+ * `FetchResponse` shape. Two near-identical interfaces for one runtime object
+ * drift, and because tsconfig sets skipLibCheck this file is never itself
+ * type-checked — so the drift would surface as a confusing error in src/,
+ * or as nothing at all.
+ */
 declare function fetch(
   url: string,
-  init?: { headers?: Record<string, string> },
-): Promise<FetchResponse>;
-
-interface URLSearchParams {
-  toString(): string;
-  get(name: string): string | null;
-}
-declare const URLSearchParams: {
-  new (init?: Record<string, string>): URLSearchParams;
-};
+  init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+  },
+): Promise<Response>;

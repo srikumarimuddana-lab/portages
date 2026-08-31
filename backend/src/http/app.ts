@@ -25,6 +25,9 @@ import { MessagingService } from '../modules/messaging/service.js';
 import { AuditService } from '../modules/audit/service.js';
 import { ModerationService } from '../modules/admin/moderation.js';
 import { FlagService } from '../modules/flags/service.js';
+import { GatewayProvider } from '../modules/ai/adapters/gateway.js';
+import { ChatSearchService } from '../modules/ai/chat-search.js';
+import { UNCONFIGURED, type ModelProvider } from '../modules/ai/provider.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
 import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
@@ -50,6 +53,10 @@ export interface App {
   moderation: ModerationService;
   /** Kill switches. Read by the guard, by notify, and by the admin console. */
   flags: FlagService;
+  /** The model provider. `UNCONFIGURED` when no Gateway credentials are set. */
+  aiProvider: ModelProvider;
+  /** Natural-language search. Present even when AI is off; the route checks the flag. */
+  chatSearch: ChatSearchService;
   /** Caps new enquiries per account, separate from the IP buckets. */
   enquiryLimiter: DurableRateLimiter;
   /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
@@ -107,6 +114,25 @@ async function build(): Promise<App> {
     uploads,
     audit,
   });
+  // AI. Absent credentials give UNCONFIGURED, which reports 503 rather than
+  // throwing — so a deployment without a Gateway key browses, searches and
+  // messages exactly as it does today, and only the AI paths say they are off.
+  //
+  // The OIDC token is read through a closure rather than captured, because
+  // Vercel rotates it and a warm instance holding a boot-time copy starts
+  // failing with 401s some hours in.
+  const aiProvider: ModelProvider = env.ai
+    ? new GatewayProvider({
+        ...(env.ai.apiKey ? { apiKey: env.ai.apiKey } : {}),
+        ...(env.ai.baseUrl ? { baseUrl: env.ai.baseUrl } : {}),
+        oidcToken: () => process.env['VERCEL_OIDC_TOKEN'],
+      })
+    : UNCONFIGURED;
+  const chatSearch = new ChatSearchService({
+    provider: aiProvider,
+    model: env.ai?.models.chatSearch ?? 'anthropic/claude-haiku-4-5',
+  });
+
   const mapkit = env.mapkit ? new MapKitTokenIssuer(env.mapkit) : null;
   // A channel is only live when BOTH the AWS credentials and its own sender
   // identity are configured; otherwise it reports itself unconfigured and the
@@ -183,6 +209,7 @@ async function build(): Promise<App> {
   return {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
     gazetteer, search, uploads, messaging, audit, moderation, flags,
+    aiProvider, chatSearch,
     enquiryLimiter, identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,

@@ -1,0 +1,21 @@
+{
+  "//": [
+    "Type-checks the offline shim ITSELF.",
+    "",
+    "tsconfig.json sets skipLibCheck: true, which is right for the build (it",
+    "skips node_modules' .d.ts files) but means typecheck:offline never checks",
+    "typecheck/node-shim.d.ts — the file every other check depends on. A",
+    "duplicate `Response` declaration lived there undetected until this config",
+    "existed; the error it should have raised was silently skipped.",
+    "",
+    "Run by `npm run typecheck:shim`, and by CI alongside the main check."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": [],
+    "skipLibCheck": false
+  },
+  "include": ["typecheck/**/*.d.ts"]
+}

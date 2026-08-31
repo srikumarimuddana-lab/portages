@@ -54,6 +54,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The offline shim is what `typecheck:offline` substitutes for
+      # @types/node when npm is unavailable, so every check outside CI rests on
+      # it — but tsconfig sets skipLibCheck, which means nothing checks the
+      # shim itself. It had accumulated two duplicate declarations before this
+      # step existed. Cheap, and it only fails when the shim is genuinely broken.
+      - name: Typecheck the offline shim
+        run: npm run typecheck:shim
+
       - name: Build
         run: npm run build
 
