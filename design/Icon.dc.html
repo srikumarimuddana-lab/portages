@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    svg { display: block; }
+  </style>
+</helmet>
+
+<svg viewBox="0 0 24 24" width="{{size}}" height="{{size}}" fill="none"
+     stroke="currentColor" stroke-width="{{weight}}" stroke-linecap="round" stroke-linejoin="round">
+  <sc-for list="{{paths}}" as="d" hint-placeholder-count="2">
+    <path d="{{d}}"></path>
+  </sc-for>
+</svg>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "glyph": {"editor": "enum", "default": "home", "options": ["bed","area","calendar","sofa","car","stairs","home","file","flame","droplet","plug","washer","paw","sun","tree","dish","balcony","box","bike","bus","school","shop","cross","wallet","smoke"]},
+  "size": {"editor": "int", "default": 20, "min": 12, "max": 64, "unit": "px"},
+  "$preview": {"width": 96, "height": 96}
+}'>
+/**
+ * One stroke-icon set, drawn on a 24px grid at a single weight.
+ *
+ * Every glyph is a list of path data only — circles are written as arcs —
+ * so one <svg> renders any of them and they all scale and recolour the same
+ * way. That uniformity is the point: twenty-five icons drawn in one hand
+ * read as a system, and twenty-five borrowed from anywhere read as clip art.
+ */
+const GLYPHS = {
+  bed:      ['M3 18v-6h18v6', 'M3 18v2M21 18v2', 'M7 12V8h10v4'],
+  area:     ['M3 8V3h5', 'M21 8V3h-5', 'M3 16v5h5', 'M21 16v5h-5'],
+  calendar: ['M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z',
+             'M16 3v4M8 3v4M3 11h18'],
+  sofa:     ['M5 12V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4', 'M3 12h18v6H3z', 'M6 18v2M18 18v2'],
+  car:      ['M5 13l1.8-5.4A1 1 0 0 1 7.7 7h8.6a1 1 0 0 1 .9.6L19 13',
+             'M3 13h18v4H3z', 'M7 17v2M17 17v2'],
+  stairs:   ['M4 20h4v-4h4v-4h4V8h4'],
+  home:     ['M3 10.5 12 3l9 7.5', 'M5 9.5V20h14V9.5'],
+  file:     ['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v5h5'],
+  flame:    ['M12 22a7 7 0 0 0 7-7c0-5-4-7-4-11 0 0-3 2-3 6 0-2-2-3-2-3s-5 3-5 8a7 7 0 0 0 7 7z'],
+  droplet:  ['M12 21a6 6 0 0 0 6-6c0-4-6-12-6-12S6 11 6 15a6 6 0 0 0 6 6z'],
+  plug:     ['M9 2v6M15 2v6', 'M6 8h12v3a6 6 0 0 1-12 0z', 'M12 17v5'],
+  washer:   ['M4 3h16v18H4z', 'M17 13a5 5 0 1 1-10 0 5 5 0 0 1 10 0z', 'M7.5 6.5h.01M11 6.5h.01'],
+  paw:      ['M9 11a2 2 0 1 1 0-4 2 2 0 0 1 0 4z', 'M15 11a2 2 0 1 1 0-4 2 2 0 0 1 0 4z',
+             'M12 21c-3.3 0-5.5-2-5.5-4.3 0-2.2 2.5-3.7 5.5-3.7s5.5 1.5 5.5 3.7C17.5 19 15.3 21 12 21z'],
+  sun:      ['M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0z',
+             'M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'],
+  tree:     ['M18 10a6 6 0 1 1-12 0 6 6 0 0 1 12 0z', 'M12 16v6', 'M9 19h6'],
+  dish:     ['M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0z', 'M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z'],
+  balcony:  ['M4 9h16', 'M4 9v11M20 9v11', 'M8 9v11M12 9v11M16 9v11', 'M2 20h20'],
+  box:      ['M3 8l9-5 9 5v8l-9 5-9-5z', 'M3 8l9 5 9-5', 'M12 13v9'],
+  bike:     ['M6.5 20a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z',
+             'M17.5 20a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z',
+             'M6.5 16.5 10 8h5l2.5 8.5', 'M9 8h4'],
+  bus:      ['M4 5h16v11H4z', 'M4 10h16',
+             'M8.5 17.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z',
+             'M18.5 17.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z'],
+  school:   ['M12 3 2 8.5l10 5.5 10-5.5z', 'M6 11v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5'],
+  shop:     ['M4 8h16v12H4z', 'M4 8l1.5-4h13L20 8', 'M9 20v-6h6v6'],
+  cross:    ['M10 3h4v7h7v4h-7v7h-4v-7H3v-4h7z'],
+  wallet:   ['M3 7v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8H6a3 3 0 0 1 0-6h11v4', 'M17 15h.01'],
+  smoke:    ['M4 12h14v4H4z', 'M20 12v4M22 12v4', 'M3 3l18 18'],
+};
+
+class Component extends DCLogic {
+  renderVals() {
+    const glyph = this.props.glyph ?? 'home';
+    const size = this.props.size ?? 20;
+    return {
+      size,
+      // Thinner strokes at large sizes, so a 48px icon does not look inked
+      // while a 15px one stays legible.
+      weight: size >= 32 ? 1.5 : size >= 20 ? 1.8 : 2,
+      paths: GLYPHS[glyph] ?? GLYPHS.home,
+    };
+  }
+}
+</script>
+</body>
+</html>

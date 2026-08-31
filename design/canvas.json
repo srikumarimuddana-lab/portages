@@ -1,0 +1,56 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 1900,
+      "title": "Listing detail \u2014 desktop",
+      "is_interactive": true
+    },
+    {
+      "file": "Mobile.dc.html",
+      "x": 1400,
+      "y": 0,
+      "w": 390,
+      "h": 1580,
+      "title": "Listing detail \u2014 phone",
+      "is_interactive": true
+    },
+    {
+      "file": "Icon.dc.html",
+      "x": 1400,
+      "y": 1720,
+      "w": 96,
+      "h": 96,
+      "title": "Icon"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "hr-adaptation",
+      "x": -360,
+      "y": 0,
+      "w": 300,
+      "text": "One field from the 99acres reference is deliberately absent.\n\n99acres shows \"Available For: Family, Bachelors (Men Only)\". That is normal in India and unlawful in Canada \u2014 the Saskatchewan Human Rights Code prohibits refusing housing on family status, sex, marital status, age or source of income.\n\nThe Owner & terms tab carries an \"Everyone may apply\" panel in its place. Portage should have no tenant-preference field anywhere: not on the listing form, not as a search filter."
+    },
+    {
+      "id": "grounding",
+      "x": -360,
+      "y": 340,
+      "w": 300,
+      "text": "Everything shown maps to something the backend already returns.\n\nAmenity chips come from the AMENITIES allowlist (heated garage, block heater plug, heat included). Neighbourhood scores are the four kinds in neighbourhood_scores: transit, schools, quiet, amenities. The safety line beside the message button is the same warning modules/messaging applies to a flagged message.\n\nThe map panel says Apple renders and the pin comes from City of Regina open data, which is the licensing split the gazetteer exists for."
+    },
+    {
+      "id": "still-open",
+      "x": -360,
+      "y": 700,
+      "w": 300,
+      "text": "Placeholders, not decisions:\n\n\u00b7 Photos are blocked out \u2014 no real Regina imagery yet.\n\u00b7 Score values (78 / 84 / 91 / 72) are illustrative; the real ones come from GTFS and open data.\n\u00b7 \"Owner active 2 days ago\" needs a last-seen field that does not exist yet.\n\u00b7 The gallery is four thumbnails; a lightbox is not designed."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}
