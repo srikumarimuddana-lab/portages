@@ -226,15 +226,33 @@ is fine. The first is the trap.
 
 ## 7. Build order
 
-| # | Ships | Depends on | Why here |
-|---|---|---|---|
-| 1 | `audit_log` writer + `requireRole` on routes | — | §4: retrofitting an audit trail loses the period that matters |
-| 2 | Moderation queue + listing review | 1 | Unblocks publishing entirely |
-| 3 | Message review + **release** | 2 | §1: the other half of a shipped decision |
-| 4 | Ops dashboard | 1 | Every number already exists in a table |
-| 5 | Users + suspend | 1 | Enforcement is built; nothing triggers it |
-| 6 | `feature_flags` + kill switches | 1 | New table |
-| 7 | Report control (public) + report queue | 2 | Human signal beats regex signal |
+| # | Ships | Depends on | Why here | State |
+|---|---|---|---|---|
+| 1 | `audit_log` writer + `requireRole` on routes | — | §4: retrofitting an audit trail loses the period that matters | **shipped** |
+| 2 | Moderation queue + listing review | 1 | Unblocks publishing entirely | **shipped** |
+| 3 | Message review + **release** | 2 | §1: the other half of a shipped decision | **shipped** |
+| 4 | Ops dashboard | 1 | Every number already exists in a table | |
+| 5 | Users + suspend | 1 | Enforcement is built; nothing triggers it | |
+| 6 | `feature_flags` + kill switches | 1 | New table — design in [11](11-configuration-and-kill-switches.md) | |
+| 7 | Report control (public) + report queue | 2 | Human signal beats regex signal | |
 
 Steps 1–3 are the ones without which the product does not function. Everything
 after is operability.
+
+### What shipped in steps 1–3
+
+`modules/audit/` (the writer, taking the caller's transaction so a decision
+and its record are atomic), `modules/admin/moderation.ts` (the queue reader
+that three tables were waiting for), staff review and **release** on
+`MessagingService`, and eight `/api/admin/*` routes — the first callers of
+`requireRole`, which had been implemented and used by nothing.
+
+Writing the RBAC tests found a leak in the gate itself: `requireRole` ran
+*after* the auth check, so an anonymous caller got 401 rather than 404 from
+an admin route. A 401 announces that a route exists as loudly as a 403 does.
+The gate now runs first.
+
+Two of the four gaps in §1 remain open: **there is still no producer for
+`reports`** (step 7 — a user cannot report anything, so the queue holds only
+what the heuristics caught), and **`feature_flags` still does not exist**
+(step 6). `verifications` now has a reader in the OTP flow.
