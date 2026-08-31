@@ -43,9 +43,13 @@ declare module 'node:assert/strict' {
     deepEqual(a: unknown, b: unknown, m?: string): void;
     notDeepEqual(a: unknown, b: unknown, m?: string): void;
     match(a: string, re: RegExp, m?: string): void;
-    ok(v: unknown, m?: string): void;
+    // Declared as an assertion function, matching @types/node, so that
+    // `assert.ok(x !== undefined)` narrows in the tests as it does at runtime.
+    ok(v: unknown, m?: string): asserts v;
     throws(fn: () => unknown, m?: unknown): void;
+    doesNotThrow(fn: () => unknown, m?: unknown): void;
     rejects(fn: () => Promise<unknown>, m?: unknown): Promise<void>;
+    doesNotReject(fn: () => Promise<unknown>, m?: unknown): Promise<void>;
     fail(m?: string): never;
   }
   const assert: A;

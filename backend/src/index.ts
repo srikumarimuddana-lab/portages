@@ -29,6 +29,7 @@ import {
 import {
   searchListings, countListings, autocomplete, neighbourhoods, geoHealth,
 } from './http/routes/search.js';
+import { completeUpload, recordPreview } from './http/routes/uploads.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -104,6 +105,10 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/api/geo/autocomplete', (req) => autocomplete(req, searchDeps));
   route('GET', '/api/geo/neighbourhoods', (req) => neighbourhoods(req, searchDeps));
   route('GET', '/api/geo/health', (req) => geoHealth(req, searchDeps));
+
+  const uploadDeps = { cfg: app.cfg, uploads: app.uploads, hsts: app.hsts };
+  route('POST', '/api/uploads/complete', (req) => completeUpload(req, uploadDeps));
+  route('POST', '/api/uploads/preview', (req) => recordPreview(req, uploadDeps));
 
   const listingDeps = { cfg: app.cfg, listings: app.listings, hsts: app.hsts };
   // `/mine` is registered before `/:id`. Matching is first-wins, so the

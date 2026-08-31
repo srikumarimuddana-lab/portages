@@ -29,6 +29,14 @@ export const conflict = (msg: string) => new AppError(409, 'conflict', msg);
 export const payloadTooLarge = (msg = 'Request body is too large.') => new AppError(413, 'payload_too_large', msg);
 export const tooManyRequests = (msg = 'Too many requests. Try again shortly.') =>
   new AppError(429, 'rate_limited', msg);
+/**
+ * A feature that is switched off or unconfigured, rather than broken.
+ *
+ * Distinct from a 500 on purpose: a 500 sends someone hunting for a bug, when
+ * the answer is a missing environment variable or a deliberate kill switch.
+ */
+export const serviceUnavailable = (msg = 'This feature is currently unavailable.') =>
+  new AppError(503, 'unavailable', msg);
 
 export interface ClientError {
   error: { code: string; message: string; details?: string[]; requestId: string };

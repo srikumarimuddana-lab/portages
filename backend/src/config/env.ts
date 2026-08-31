@@ -34,6 +34,20 @@ export interface Env {
     sesConfigurationSet?: string | undefined;
     smsOriginationIdentity?: string | undefined;
   };
+  /**
+   * S3-compatible object storage. Absent means uploads are disabled — which
+   * is a coherent state, not a broken one: browsing and search work, and
+   * anything that would store bytes reports the feature as unavailable.
+   */
+  storage?: {
+    endpoint: string;
+    bucket: string;
+    region: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    /** CDN or public bucket domain used for read URLs. */
+    publicBaseUrl?: string | undefined;
+  };
 }
 
 const MIN_SECRET_LEN = 32;
@@ -147,6 +161,32 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     errors.push('SES_FROM_ADDRESS requires AWS credentials');
   }
 
+  // Object storage. All-or-nothing for the same reason as AWS above: a
+  // half-configured bucket fails at the moment a user uploads a photo, which
+  // is the worst possible time to discover it.
+  const stEndpoint = source['STORAGE_ENDPOINT'];
+  const stBucket = source['STORAGE_BUCKET'];
+  const stKey = source['STORAGE_ACCESS_KEY_ID'];
+  const stSecret = source['STORAGE_SECRET_ACCESS_KEY'];
+  let storage: Env['storage'];
+  const stParts = [stEndpoint, stBucket, stKey, stSecret];
+  if (stParts.every(Boolean)) {
+    // R2 uses the literal region `auto`; S3 wants the bucket's real region.
+    storage = {
+      endpoint: stEndpoint!.replace(/^https?:\/\//, '').replace(/\/+$/, ''),
+      bucket: stBucket!,
+      region: source['STORAGE_REGION'] ?? 'auto',
+      accessKeyId: stKey!,
+      secretAccessKey: stSecret!,
+      publicBaseUrl: source['STORAGE_PUBLIC_BASE_URL'],
+    };
+  } else if (stParts.some(Boolean)) {
+    errors.push(
+      'STORAGE_ENDPOINT, STORAGE_BUCKET, STORAGE_ACCESS_KEY_ID and ' +
+      'STORAGE_SECRET_ACCESS_KEY must be set together',
+    );
+  }
+
   if (errors.length) {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join('\n  - ')}`);
   }
@@ -165,6 +205,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     oauth,
     publicOrigin,
     ...(aws ? { aws } : {}),
+    ...(storage ? { storage } : {}),
     ...(mkPresent === 3
       ? { mapkit: { teamId: mkTeam!, keyId: mkKey!, privateKeyPem: mkPem!.replace(/\\n/g, '\n') } }
       : {}),

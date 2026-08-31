@@ -152,8 +152,26 @@ export interface PhotoView {
 export interface PhotoTicket {
   photoId: string;
   storageKey: string;
+  /**
+   * Where the browser PUTs the bytes. Present only when object storage is
+   * configured; otherwise the row is reserved but nothing can be stored.
+   */
+  uploadUrl?: string;
+  /** Presented to /api/uploads/complete once the PUT succeeds. */
   uploadToken: string;
   expiresAt: number;
+}
+
+/** Issues the presigned PUT and records the pending upload. */
+export interface UploadTicketIssuer {
+  ticket(input: {
+    ownerId: string;
+    subjectType: 'listing_media' | 'document';
+    subjectId: string;
+    storageKey: string;
+    mime: string;
+    bytes: number;
+  }): Promise<{ uploadUrl: string; completionToken: string; expiresAt: number }>;
 }
 
 export interface Viewer {
@@ -177,16 +195,22 @@ export class ListingService {
   readonly #storageSecret: string;
   readonly #now: () => Date;
   readonly #geocoder: AddressResolver | null;
+  readonly #uploads: UploadTicketIssuer | null;
 
   constructor(
     db: Sql,
     storageSecret: string,
-    opts: { now?: () => Date; geocoder?: AddressResolver | null } = {},
+    opts: {
+      now?: () => Date;
+      geocoder?: AddressResolver | null;
+      uploads?: UploadTicketIssuer | null;
+    } = {},
   ) {
     this.#db = db;
     this.#storageSecret = storageSecret;
     this.#now = opts.now ?? (() => new Date());
     this.#geocoder = opts.geocoder ?? null;
+    this.#uploads = opts.uploads ?? null;
   }
 
   // ── create ────────────────────────────────────────────────────────────────
@@ -645,6 +669,28 @@ export class ListingService {
       );
     });
 
+    // The upload service mints the presigned PUT and records the pending
+    // upload, so the row and the object are created by the same step. Without
+    // it configured the row still exists — the listing is simply not
+    // publishable until a photo can actually be stored.
+    if (this.#uploads) {
+      const t = await this.#uploads.ticket({
+        ownerId,
+        subjectType: 'listing_media',
+        subjectId: photoId,
+        storageKey,
+        mime: input.mime,
+        bytes: input.bytes,
+      });
+      return {
+        photoId,
+        storageKey,
+        uploadUrl: t.uploadUrl,
+        uploadToken: t.completionToken,
+        expiresAt: t.expiresAt,
+      };
+    }
+
     const expiresAt = Math.floor(this.#now().getTime() / 1000) + PHOTO_UPLOAD_TTL_SEC;
     return {
       photoId,
@@ -727,7 +773,10 @@ export class ListingService {
     row: ListingRow & { email_verified_at: Date | null },
   ): Promise<void> {
     const photos = await tx.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM listing_media WHERE listing_id = $1 AND kind = 'photo'`,
+      // Only stored photos count. A reserved row whose bytes never arrived
+      // must not make a listing look ready to publish.
+      `SELECT count(*)::text AS n FROM listing_media
+        WHERE listing_id = $1 AND kind = 'photo' AND status = 'stored'`,
       [row.id],
     );
     const blockers = publishBlockers({

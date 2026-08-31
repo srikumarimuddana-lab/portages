@@ -19,6 +19,8 @@ import { OtpFlows } from '../modules/auth/otp/flows.js';
 import { ListingService } from '../modules/listings/service.js';
 import { Gazetteer } from '../modules/geo/gazetteer.js';
 import { SearchService } from '../modules/search/service.js';
+import { S3Storage } from '../modules/storage/s3.js';
+import { UploadService } from '../modules/storage/service.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
 import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
@@ -37,6 +39,8 @@ export interface App {
   listings: ListingService;
   gazetteer: Gazetteer;
   search: SearchService;
+  /** Absent when object storage is not configured; uploads report 503. */
+  uploads: UploadService | null;
   /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
   identifierLimiter: DurableRateLimiter;
   cfg: GuardConfig;
@@ -58,11 +62,32 @@ async function build(): Promise<App> {
   const documents = new DocumentService(db, env.storageSecret);
   const gazetteer = new Gazetteer(db);
   const search = new SearchService(db);
-  // Shares the storage secret: listing photos and locker documents are both
-  // direct-to-storage uploads signed the same way. The gazetteer is injected
-  // as the geocoder, so a new listing gets a coordinate sourced from City of
-  // Regina open data rather than from Apple, whose licence forbids storing it.
-  const listings = new ListingService(db, env.storageSecret, { geocoder: gazetteer });
+  // Object storage is optional. Without it the site still browses and
+  // searches; only storing bytes is unavailable, and it says so.
+  const uploads = env.storage
+    ? new UploadService({
+        db,
+        storage: new S3Storage({
+          endpoint: env.storage.endpoint,
+          bucket: env.storage.bucket,
+          region: env.storage.region,
+          credentials: {
+            accessKeyId: env.storage.accessKeyId,
+            secretAccessKey: env.storage.secretAccessKey,
+          },
+          publicBaseUrl: env.storage.publicBaseUrl,
+        }),
+        ticketSecret: env.storageSecret,
+      })
+    : null;
+  // The gazetteer is injected as the geocoder, so a new listing gets a
+  // coordinate sourced from City of Regina open data rather than from Apple,
+  // whose licence forbids storing it. The upload service mints the presigned
+  // PUT for each photo.
+  const listings = new ListingService(db, env.storageSecret, {
+    geocoder: gazetteer,
+    uploads,
+  });
   const mapkit = env.mapkit ? new MapKitTokenIssuer(env.mapkit) : null;
   // A channel is only live when BOTH the AWS credentials and its own sender
   // identity are configured; otherwise it reports itself unconfigured and the
@@ -118,7 +143,7 @@ async function build(): Promise<App> {
 
   return {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
-    gazetteer, search, identifierLimiter, cfg,
+    gazetteer, search, uploads, identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,
   };

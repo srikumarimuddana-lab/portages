@@ -258,10 +258,13 @@ test('email: a signed request carries the SigV4 authorization header', async () 
 
   const receipt = await ch.send({ to: 'a@b.com', subject: 's', text: 't', idempotencyKey: 'k' });
   assert.equal(receipt.providerMessageId, 'msg-1');
-  assert.ok(seen);
-  assert.ok(seen!.url.startsWith('https://email.ca-central-1.amazonaws.com/'));
-  assert.match(seen!.headers['authorization']!, /^AWS4-HMAC-SHA256 Credential=/);
-  assert.ok(seen!.headers['x-amz-date']);
+  // Copied out before asserting: TypeScript cannot see that the fetch callback
+  // ran, so `seen` still reads as null to the checker.
+  const sent = seen as unknown as { url: string; headers: Record<string, string> } | null;
+  assert.ok(sent, 'the channel must have called fetch');
+  assert.ok(sent.url.startsWith('https://email.ca-central-1.amazonaws.com/'));
+  assert.match(sent.headers['authorization']!, /^AWS4-HMAC-SHA256 Credential=/);
+  assert.ok(sent.headers['x-amz-date']);
 });
 
 test('email: a 400 from SES is not retried; a 500 is', async () => {
