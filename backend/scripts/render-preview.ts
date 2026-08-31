@@ -17,6 +17,14 @@
  */
 import { writeFile, mkdir } from 'node:fs/promises';
 import { homePage, searchPage, listingPage, signInPage } from '../src/web/pages.js';
+import {
+  signUpPage, ownerListingsPage, newListingPage, inboxPage, threadPage,
+} from '../src/web/pages-app.js';
+import {
+  queuePage, listingReviewPage, messageReviewPage, flagsPage,
+} from '../src/web/pages-admin.js';
+import { AMENITIES, PROPERTY_TYPES } from '../src/modules/listings/policy.js';
+import { FLAG_KEYS, FLAGS, defaultStateOf } from '../src/modules/flags/registry.js';
 import type { SearchResultCard } from '../src/modules/search/service.js';
 import type { ListingView } from '../src/modules/listings/service.js';
 
@@ -99,6 +107,12 @@ const HOSTILE: ListingView = {
   address: { ...LISTING.address, addressLine: '<h1>injected</h1> 99 Fake St' },
 };
 
+const STAFF = { userId: 's', role: 'staff' as const };
+const ADMIN = { userId: 'a', role: 'admin' as const };
+const OWNER = { userId: 'o', role: 'user' as const };
+
+const AT = new Date('2026-08-31T14:20:00Z');
+
 const PAGES: Array<[string, string]> = [
   ['home', homePage({ viewer: null, recent: CARDS, liveCount: 128 })],
   ['search', searchPage({
@@ -130,7 +144,151 @@ const PAGES: Array<[string, string]> = [
   })],
   ['signin', signInPage({})],
   ['signin-error', signInPage({ error: 'That email and password did not match.' })],
+  ['signup', signUpPage({})],
+
+  ['owner-listings', ownerListingsPage({
+    viewer: OWNER,
+    listings: [
+      { ...LISTING, id: 'a', status: 'live', actions: ['pause', 'close'] },
+      {
+        ...LISTING, id: 'b', status: 'pending_review', title: 'Upper suite on Retallack',
+        actions: [], address: { ...LISTING.address, addressLine: '919 Retallack St' },
+      },
+      {
+        ...LISTING, id: 'c', status: 'draft', title: 'Studio above the shops',
+        priceCents: 89_000, beds: 0, actions: ['submit'],
+        descriptionSource: 'ai', descriptionAttested: false,
+        address: { ...LISTING.address, addressLine: '2340 Smith St' },
+      },
+    ],
+  })],
+  ['owner-listings-empty', ownerListingsPage({ viewer: OWNER, listings: [] })],
+  ['listing-new', newListingPage({
+    viewer: OWNER, propertyTypes: PROPERTY_TYPES, amenities: AMENITIES, aiEnabled: true,
+  })],
+
+  ['inbox', inboxPage({
+    viewer: OWNER,
+    threads: [
+      thread('t1', 'Bright two bedroom in Cathedral', 2, 'owner', 'Is this still available?'),
+      thread('t2', 'Upper suite on Retallack', 0, 'inquirer', 'Saturday at two works.'),
+      { ...thread('t3', 'Studio above the shops', 0, 'owner', null), status: 'blocked' as const,
+        blockedByMe: true },
+    ],
+  })],
+  ['inbox-empty', inboxPage({ viewer: OWNER, threads: [] })],
+  ['thread', threadPage({
+    viewer: OWNER,
+    thread: {
+      ...thread('t1', 'Bright two bedroom in Cathedral', 0, 'owner', null),
+      messages: [
+        msg(false, 'Hi — is this still available? I would like to arrange a viewing.', false),
+        msg(true, 'It is. Are you free Saturday afternoon?', false),
+        msg(false, 'I am currently abroad but can courier the keys once you e-transfer the deposit.', true),
+      ],
+    },
+  })],
+
+  ['admin-queue', queuePage({
+    viewer: STAFF, state: 'open',
+    stats: { open: 4, openListings: 2, openMessages: 2, oldestWaitingSec: 4 * 86400,
+             blockedLast7d: 11, releasedLast7d: 3 },
+    items: [
+      queueItem('message', 130, 'Message from sender@example.test', 'block · Bright two bedroom',
+                6 * 3600, [['money_request', 130], ['absent_landlord_script', 70]]),
+      queueItem('listing', 45, '2100 Victoria Ave · Regina', 'listing · $1,500/mo · 2 bed',
+                4 * 86400, [['user_report_scam', 45]]),
+      queueItem('listing', 12, '919 Retallack St · Regina', 'listing · $1,320/mo · 2 bed',
+                26 * 3600, []),
+    ],
+  })],
+  ['admin-queue-empty', queuePage({
+    viewer: STAFF, state: 'open',
+    stats: { open: 0, openListings: 0, openMessages: 0, oldestWaitingSec: null,
+             blockedLast7d: 2, releasedLast7d: 1 },
+    items: [],
+  })],
+  ['admin-listing', listingReviewPage({
+    viewer: STAFF,
+    listing: {
+      id: 'l1', title: LISTING.title, description: LISTING.description,
+      descriptionSource: 'ai', priceCents: 150_000, mode: 'rent',
+      beds: 2, baths: 1, sqft: 820, amenities: LISTING.amenities.slice(0, 5),
+      status: 'pending_review',
+      address: { addressLine: '2100 Victoria Ave', city: 'Regina', province: 'SK' },
+    },
+    signals: [{ signal: 'price_outlier', weight: 30 }, { signal: 'new_account', weight: 10 }],
+    reports: [
+      { kind: 'scam', detail: 'These are photos of my own flat.', createdAt: AT },
+      { kind: 'misleading', detail: null, createdAt: AT },
+    ],
+  })],
+  ['admin-message', messageReviewPage({
+    viewer: STAFF,
+    message: {
+      id: 'm1',
+      body: 'I am currently abroad but the flat is available. Send the deposit by '
+        + 'e-transfer today and I will courier the keys to you this week.',
+      verdict: 'block',
+      flaggedReasons: ['money_request', 'absent_landlord_script'],
+      delivered: false, isFirstContact: true, createdAt: AT,
+      sender: { email: 'sender@example.test', emailVerified: false, blockedCount: 3 },
+      recipient: { email: 'renter@example.test' },
+      listing: { id: 'l1', title: 'Bright two bedroom in Cathedral' },
+      context: [
+        { body: 'Hi — is this still available?', mine: false, createdAt: AT },
+        { body: 'Yes it is.', mine: true, createdAt: AT },
+      ],
+    },
+  })],
+  ['admin-flags', flagsPage({
+    viewer: ADMIN, cache: 'fresh',
+    flags: FLAG_KEYS.map((key, i) => ({
+      key, label: FLAGS[key].label, tier: FLAGS[key].tier,
+      effect: FLAGS[key].effect, failsafe: FLAGS[key].failsafe,
+      configured: i === 0,
+      enabled: i === 0 ? false : defaultStateOf(key).enabled,
+      rolloutPct: defaultStateOf(key).rolloutPct,
+      note: i === 0 ? 'SES bounce spike, ticket 41' : null,
+      updatedBy: null, updatedAt: i === 0 ? AT : null,
+    })),
+  })],
+  ['admin-flags-blind', flagsPage({
+    viewer: STAFF, cache: 'blind',
+    flags: FLAG_KEYS.slice(0, 3).map((key) => ({
+      key, label: FLAGS[key].label, tier: FLAGS[key].tier,
+      effect: FLAGS[key].effect, failsafe: FLAGS[key].failsafe,
+      configured: false, enabled: true, rolloutPct: 100,
+      note: null, updatedBy: null, updatedAt: null,
+    })),
+  })],
 ];
+
+function thread(id: string, listingTitle: string, unreadCount: number,
+                role: 'owner' | 'inquirer', lastPreview: string | null) {
+  return {
+    id, listingId: 'l1', listingTitle, listingStatus: 'live',
+    counterpartyId: 'other', status: 'open' as const, role,
+    messageCount: 3, unreadCount, lastAt: AT, lastPreview, blockedByMe: false,
+  };
+}
+
+function msg(mine: boolean, body: string, flagged: boolean) {
+  return { id: Math.random().toString(36), senderId: mine ? 'o' : 'x', body,
+           kind: 'text', createdAt: AT, flagged, mine };
+}
+
+function queueItem(subjectType: 'listing' | 'message', riskScore: number,
+                   title: string, subtitle: string, waitingSec: number,
+                   signals: Array<[string, number]>) {
+  return {
+    id: `q-${title.slice(0, 6)}`, subjectType, subjectId: 'x',
+    reason: 'auto', riskScore, state: 'open' as const,
+    createdAt: new Date(AT.getTime() - waitingSec * 1000), waitingSec,
+    title, subtitle,
+    signals: signals.map(([signal, weight]) => ({ signal, weight, detail: {}, at: AT })),
+  };
+}
 
 async function main(): Promise<void> {
   await mkdir(OUT, { recursive: true });

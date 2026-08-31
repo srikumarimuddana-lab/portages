@@ -128,6 +128,12 @@ label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-2); 
 .badge-live { background: #e8f5ec; color: #1c6b3a; }
 .badge-review { background: #fdf3e3; color: #8a5a10; }
 .badge-draft { background: var(--surface); color: var(--ink-2); }
+/* The one that matters most during an incident: "Off" on the kill-switch
+   page, a risk score over the block threshold, an item that has waited days.
+   It was used in six places and defined in none — every one of them silently
+   rendered as plain bold text. Caught by looking at the page; a test now
+   asserts every badge class used is defined. */
+.badge-warn { background: #fdece9; color: #9c2c1a; }
 
 /* listing detail */
 .detail { display: grid; grid-template-columns: 1fr 330px; gap: 34px; align-items: start;

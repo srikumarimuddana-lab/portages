@@ -330,3 +330,84 @@ test('staff see the moderation link and ordinary users do not', () => {
   assert.ok(!anon.includes('/admin/queue'));
   assert.match(anon, /Sign in/);
 });
+
+// ── the design system cannot drift from the pages that use it ───────────────
+
+test('every badge class a page uses is defined in the CSS', async () => {
+  // This exists because `.badge-warn` was used in six places and defined in
+  // none. Every one of them rendered as plain bold text — including "Off" on
+  // the kill-switch page, which is the single state you most need to spot
+  // during an incident. Nothing failed; it just quietly looked wrong.
+  const { readFile } = await import('node:fs/promises');
+  const dir = new URL('../src/web/', import.meta.url).pathname;
+
+  const layout = await readFile(`${dir}layout.ts`, 'utf8');
+  const defined = new Set(
+    [...layout.matchAll(/\.(badge-[a-z0-9-]+)\s*\{/g)].map((m) => m[1]!),
+  );
+
+  const used = new Set<string>();
+  for (const f of ['pages.ts', 'pages-app.ts', 'pages-admin.ts', 'layout.ts']) {
+    const src = await readFile(`${dir}${f}`, 'utf8');
+    for (const m of src.matchAll(/['"`\s](badge-[a-z0-9-]+)['"`\s]/g)) used.add(m[1]!);
+  }
+
+  const missing = [...used].filter((c) => !defined.has(c));
+  assert.deepEqual(missing, [], `badge classes used but never defined: ${missing.join(', ')}`);
+  assert.ok(defined.size >= 4, 'sanity: the CSS should define several badge classes');
+});
+
+test('every chip and notice modifier a page uses is defined too', async () => {
+  // Same failure mode as the badges, checked for the other two families that
+  // carry meaning rather than decoration.
+  const { readFile } = await import('node:fs/promises');
+  const dir = new URL('../src/web/', import.meta.url).pathname;
+  const layout = await readFile(`${dir}layout.ts`, 'utf8');
+
+  for (const family of ['chip', 'notice']) {
+    const defined = new Set(
+      [...layout.matchAll(new RegExp(`\\.(${family}-[a-z0-9-]+)\\s*\\{`, 'g'))]
+        .map((m) => m[1]!),
+    );
+    const used = new Set<string>();
+    for (const f of ['pages.ts', 'pages-app.ts', 'pages-admin.ts']) {
+      const src = await readFile(`${dir}${f}`, 'utf8');
+      for (const m of src.matchAll(new RegExp(`[\\s"'\`](${family}-[a-z0-9-]+)[\\s"'\`]`, 'g'))) {
+        used.add(m[1]!);
+      }
+    }
+    const missing = [...used].filter((c) => !defined.has(c));
+    assert.deepEqual(missing, [], `${family} classes used but never defined: ${missing.join(', ')}`);
+  }
+});
+
+test('no page nests a form inside another form', async () => {
+  // Invalid HTML that browsers do not report: the inner <form> is dropped and
+  // its buttons silently submit the OUTER one. On the thread page that meant
+  // "Block this conversation" would have sent a reply instead — the opposite
+  // of what someone clicking it wants, with no error anywhere.
+  const { readFile } = await import('node:fs/promises');
+  const dir = new URL('../src/web/', import.meta.url).pathname;
+
+  for (const f of ['pages.ts', 'pages-app.ts', 'pages-admin.ts']) {
+    // Comments are stripped first. The comment explaining THIS bug mentions
+    // a form inside a form in prose, and a scanner that counted it would
+    // report the file it was added to — which is a fine way to spend twenty
+    // minutes concluding the test is broken.
+    const src = (await readFile(`${dir}${f}`, 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+    // Walk the template text tracking form depth. Crude, and sufficient:
+    // these files contain no computed tag names, so a textual scan sees
+    // exactly what the browser will.
+    let depth = 0;
+    let maxDepth = 0;
+    for (const m of src.matchAll(/<form\b|<\/form>/g)) {
+      depth += m[0] === '</form>' ? -1 : 1;
+      maxDepth = Math.max(maxDepth, depth);
+    }
+    assert.equal(depth, 0, `${f}: unbalanced <form> tags`);
+    assert.equal(maxDepth, 1, `${f}: a <form> is nested inside another <form>`);
+  }
+});

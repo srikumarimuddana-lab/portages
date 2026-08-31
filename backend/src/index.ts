@@ -43,6 +43,10 @@ import {
 import { aiSearch, describeListing } from './http/routes/ai.js';
 import { createReport, listReports, decideReports } from './http/routes/reports.js';
 import { homeRoute, searchRoute, listingRoute, signInRoute } from './web/routes.js';
+import {
+  signUpRoute, ownerListingsRoute, newListingRoute, inboxRoute, threadRoute,
+  queueRoute, listingReviewRoute, messageReviewRoute, flagsRoute, mediaRoute,
+} from './web/routes-app.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -141,6 +145,19 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/search', (req) => searchRoute(req, app));
   route('GET', '/listings/:id', (req, p) => listingRoute(req, p['id']!, app));
   route('GET', '/signin', (req) => signInRoute(req, app));
+  route('GET', '/signup', (req) => signUpRoute(req, app));
+  route('GET', '/media/:key', (req, p) => mediaRoute(req, p['key']!, app));
+
+  route('GET', '/dashboard/listings', (req) => ownerListingsRoute(req, app));
+  route('GET', '/dashboard/listings/new', (req) => newListingRoute(req, app));
+  route('GET', '/messages', (req) => inboxRoute(req, app));
+  route('GET', '/messages/:id', (req, p) => threadRoute(req, p['id']!, app));
+
+  // Staff pages. These answer 404 to everyone else, matching requireRole.
+  route('GET', '/admin/queue', (req) => queueRoute(req, app));
+  route('GET', '/admin/listings/:id', (req, p) => listingReviewRoute(req, p['id']!, app));
+  route('GET', '/admin/messages/:id', (req, p) => messageReviewRoute(req, p['id']!, app));
+  route('GET', '/admin/flags', (req) => flagsRoute(req, app));
 
   const reportDeps = { cfg: app.cfg, reports: app.reports, hsts: app.hsts };
   route('POST', '/api/reports', (req) => createReport(req, reportDeps));

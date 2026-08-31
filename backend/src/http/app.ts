@@ -52,6 +52,13 @@ export interface App {
   search: SearchService;
   /** Absent when object storage is not configured; uploads report 503. */
   uploads: UploadService | null;
+  /**
+   * The object store itself. Exposed alongside `uploads` because the media
+   * route needs a read URL, which is a storage concern rather than an upload
+   * one — and because handing the whole UploadService to a page route would
+   * give it the ability to mint upload tickets, which it has no business with.
+   */
+  storage: S3Storage | null;
   messaging: MessagingService;
   audit: AuditService;
   moderation: ModerationService;
@@ -108,21 +115,20 @@ async function build(): Promise<App> {
   const search = new SearchService(db);
   // Object storage is optional. Without it the site still browses and
   // searches; only storing bytes is unavailable, and it says so.
-  const uploads = env.storage
-    ? new UploadService({
-        db,
-        storage: new S3Storage({
-          endpoint: env.storage.endpoint,
-          bucket: env.storage.bucket,
-          region: env.storage.region,
-          credentials: {
-            accessKeyId: env.storage.accessKeyId,
-            secretAccessKey: env.storage.secretAccessKey,
-          },
-          publicBaseUrl: env.storage.publicBaseUrl,
-        }),
-        ticketSecret: env.storageSecret,
+  const storage = env.storage
+    ? new S3Storage({
+        endpoint: env.storage.endpoint,
+        bucket: env.storage.bucket,
+        region: env.storage.region,
+        credentials: {
+          accessKeyId: env.storage.accessKeyId,
+          secretAccessKey: env.storage.secretAccessKey,
+        },
+        publicBaseUrl: env.storage.publicBaseUrl,
       })
+    : null;
+  const uploads = storage
+    ? new UploadService({ db, storage, ticketSecret: env.storageSecret })
     : null;
   // The gazetteer is injected as the geocoder, so a new listing gets a
   // coordinate sourced from City of Regina open data rather than from Apple,
@@ -253,7 +259,7 @@ async function build(): Promise<App> {
 
   return {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
-    gazetteer, search, uploads, messaging, audit, moderation, flags,
+    gazetteer, search, uploads, storage, messaging, audit, moderation, flags,
     aiProvider, chatSearch, listingBuilder, aiModeration,
     aiLedger, metered, aiLimiter, reports,
     enquiryLimiter, identifierLimiter, cfg,
