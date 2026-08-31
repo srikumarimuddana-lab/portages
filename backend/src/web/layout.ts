@@ -15,9 +15,26 @@ import { html, raw, escape, type Html } from './html.js';
 export interface Viewer {
   userId: string;
   role: 'user' | 'staff' | 'admin';
+  /**
+   * The CSRF token for this session, read from its cookie.
+   *
+   * Carried on the viewer rather than threaded through every page's options
+   * because it is needed by every form on every signed-in page, and a
+   * parameter that must be passed everywhere is a parameter that will one day
+   * be forgotten on the one page that mattered. `csrfField` throws when it is
+   * absent, so a missing token is a loud failure at render time rather than a
+   * form that silently 403s in production.
+   */
+  csrfToken?: string | undefined;
 }
 
-export interface PageOptions {
+/** The one-shot messages a redirect can carry into any page. */
+export interface Flash {
+  notice?: string | null | undefined;
+  error?: string | null | undefined;
+}
+
+export interface PageOptions extends Flash {
   title: string;
   /** The meta description. Absent means no tag, rather than an empty one. */
   description?: string | undefined;
@@ -28,6 +45,12 @@ export interface PageOptions {
   structuredData?: Html | undefined;
   /** Extra markup for <head>, e.g. og: tags on a listing page. */
   head?: Html | undefined;
+  /*
+   * `notice` and `error` come from Flash above. They are rendered by the
+   * shell rather than by each page, because a redirect whose message nothing
+   * displays is a form that appears to do nothing — and the page that forgets
+   * to render it is always the one whose failure mattered.
+   */
   bodyClass?: string | undefined;
 }
 
@@ -208,10 +231,21 @@ ${opts.structuredData
 </head>
 <body${opts.bodyClass ? ` class="${escape(opts.bodyClass)}"` : ''}>
 ${header(opts.viewer ?? null)}
+${flash(opts)}
 <main>${body}</main>
 ${footer()}
 </body>
 </html>`;
+}
+
+/** The flash strip. Absent when there is nothing to say. */
+function flash(opts: PageOptions): Html {
+  if (!opts.notice && !opts.error) return raw('');
+  return html`
+<div class="wrap" style="padding-top:16px">
+  ${opts.error ? html`<p class="notice notice-warn" role="alert">${opts.error}</p>` : null}
+  ${opts.notice ? html`<p class="notice" role="status">${opts.notice}</p>` : null}
+</div>`;
 }
 
 function header(viewer: Viewer | null): Html {
@@ -225,7 +259,16 @@ function header(viewer: Viewer | null): Html {
     ${viewer && (viewer.role === 'staff' || viewer.role === 'admin')
       ? html`<a href="/admin/queue">Moderation</a>` : null}
     ${viewer
-      ? html`<a class="btn btn-sm" href="/dashboard/listings/new">Post a listing</a>`
+      ? html`
+        <a class="btn btn-sm" href="/dashboard/listings/new">Post a listing</a>
+        ${/* A POST, not a link. Sign-out from a GET is something any <img>
+              on any page could do to a visitor. */
+          viewer.csrfToken
+          ? html`<form method="post" action="/signout" style="display:inline">
+                   ${csrfField(viewer)}
+                   <button class="btn btn-sm" type="submit">Sign out</button>
+                 </form>`
+          : null}`
       : html`<a href="/signin">Sign in</a>
              <a class="btn btn-sm btn-primary" href="/signup">Create account</a>`}
   </nav>
@@ -238,6 +281,20 @@ function footer(): Html {
   Portage — owner-direct property in Regina, Saskatchewan. No commission, no listing fee.
   <br>Listings are posted by their owners. Never send money before viewing a property in person.
 </div></footer>`;
+}
+
+/**
+ * The hidden field that makes a form post survive the CSRF check.
+ *
+ * Every signed-in form needs exactly this. It throws rather than rendering
+ * nothing when the token is missing, because the alternative is a form that
+ * looks fine, submits, and is refused — with the cause three layers away.
+ */
+export function csrfField(viewer: Viewer): Html {
+  if (!viewer.csrfToken) {
+    throw new Error('csrfField: the viewer carries no CSRF token — see routes.ts viewerOf()');
+  }
+  return html`<input type="hidden" name="csrf" value="${viewer.csrfToken}">`;
 }
 
 /** `$1,500` — cents in, dollars out, no stray decimals on whole amounts. */

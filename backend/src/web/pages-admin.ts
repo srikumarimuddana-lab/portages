@@ -18,7 +18,7 @@
  * role gate, the state machine and the audit writer all apply.
  */
 import { html, type Html } from './html.js';
-import { page, money, type Viewer } from './layout.js';
+import { page, money, csrfField, type Flash, type Viewer } from './layout.js';
 import type { QueueItem, QueueStats } from '../modules/admin/moderation.js';
 import type { FlagState, CacheState } from '../modules/flags/service.js';
 
@@ -45,7 +45,7 @@ function ageTone(seconds: number | null): { cls: string; text: string } {
 
 // ── the queue ───────────────────────────────────────────────────────────────
 
-export function queuePage(opts: {
+export function queuePage(opts: Flash & {
   viewer: Viewer;
   items: QueueItem[];
   stats: QueueStats;
@@ -53,7 +53,7 @@ export function queuePage(opts: {
 }): string {
   const tone = ageTone(opts.stats.oldestWaitingSec);
   return page(
-    { title: 'Moderation queue', viewer: opts.viewer, path: '/admin/queue' },
+    { title: 'Moderation queue', viewer: opts.viewer, path: '/admin/queue' , notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="padding:26px 20px 60px">
   <h1>Moderation</h1>
@@ -94,12 +94,12 @@ export function queuePage(opts: {
                ? 'Every listing and message has been looked at.'
                : 'Decisions you make will appear here.'}</p>
            </div>`
-    : html`<div class="stack" style="margin-top:14px">${opts.items.map(queueRow)}</div>`}
+    : html`<div class="stack" style="margin-top:14px">${opts.items.map((i) => queueRow(i, opts.viewer))}</div>`}
 </div>`,
   );
 }
 
-function queueRow(item: QueueItem): Html {
+function queueRow(item: QueueItem, viewer: Viewer): Html {
   return html`
 <div class="card" style="padding:14px 16px">
   <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
@@ -130,7 +130,8 @@ function queueRow(item: QueueItem): Html {
       Review
     </a>
     ${item.state === 'open'
-      ? html`<form method="post" action="/api/admin/queue/${item.id}/dismiss">
+      ? html`<form method="post" action="/admin/queue/${item.id}/dismiss">
+               ${csrfField(viewer)}
                <button class="btn btn-sm" type="submit">Looked, nothing to do</button>
              </form>`
       : null}
@@ -155,7 +156,7 @@ export interface ReviewListing {
   status: string;
 }
 
-export function listingReviewPage(opts: {
+export function listingReviewPage(opts: Flash & {
   viewer: Viewer;
   listing: ReviewListing;
   signals: Array<{ signal: string; weight: number }>;
@@ -163,7 +164,7 @@ export function listingReviewPage(opts: {
 }): string {
   const l = opts.listing;
   return page(
-    { title: `Review: ${l.title}`, viewer: opts.viewer, path: `/admin/listings/${l.id}` },
+    { title: `Review: ${l.title}`, viewer: opts.viewer, path: `/admin/listings/${l.id}` , notice: opts.notice, error: opts.error },
     html`
 <div class="wrap detail" style="padding-top:22px">
   <div>
@@ -215,13 +216,15 @@ export function listingReviewPage(opts: {
       Approving publishes this to everyone. Rejecting sends the reason to the owner.
     </p>
 
-    <form method="post" action="/api/admin/listings/${l.id}/decide" class="stack">
+    <form method="post" action="/admin/listings/${l.id}/decide" class="stack">
+      ${csrfField(opts.viewer)}
       <input type="hidden" name="action" value="approve">
       <button class="btn btn-primary" type="submit" style="width:100%">Approve and publish</button>
     </form>
 
-    <form method="post" action="/api/admin/listings/${l.id}/decide" class="stack"
+    <form method="post" action="/admin/listings/${l.id}/decide" class="stack"
           style="margin-top:16px;border-top:1px solid var(--line);padding-top:16px">
+      ${csrfField(opts.viewer)}
       <input type="hidden" name="action" value="reject">
       <div class="field">
         <label for="reason">Reason (the owner sees this)</label>
@@ -253,10 +256,10 @@ export interface ReviewMessage {
   context: Array<{ body: string; mine: boolean; createdAt: Date }>;
 }
 
-export function messageReviewPage(opts: { viewer: Viewer; message: ReviewMessage }): string {
+export function messageReviewPage(opts: Flash & { viewer: Viewer; message: ReviewMessage }): string {
   const m = opts.message;
   return page(
-    { title: 'Review message', viewer: opts.viewer, path: `/admin/messages/${m.id}` },
+    { title: 'Review message', viewer: opts.viewer, path: `/admin/messages/${m.id}` , notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="max-width:820px;padding:22px 20px 60px">
   <p class="small"><a href="/admin/queue">← Queue</a></p>
@@ -307,11 +310,13 @@ export function messageReviewPage(opts: { viewer: Viewer; message: ReviewMessage
     : html`<p class="muted" style="margin-top:20px">No earlier messages in this thread.</p>`}
 
   <div style="display:flex;gap:10px;margin-top:26px;border-top:1px solid var(--line);padding-top:20px">
-    <form method="post" action="/api/admin/messages/${m.id}/decide">
+    <form method="post" action="/admin/messages/${m.id}/decide">
+      ${csrfField(opts.viewer)}
       <input type="hidden" name="action" value="release">
       <button class="btn btn-primary" type="submit">Release — the scanner was wrong</button>
     </form>
-    <form method="post" action="/api/admin/messages/${m.id}/decide">
+    <form method="post" action="/admin/messages/${m.id}/decide">
+      ${csrfField(opts.viewer)}
       <input type="hidden" name="action" value="uphold">
       <button class="btn" type="submit">Uphold the block</button>
     </form>
@@ -322,14 +327,14 @@ export function messageReviewPage(opts: { viewer: Viewer; message: ReviewMessage
 
 // ── kill switches ───────────────────────────────────────────────────────────
 
-export function flagsPage(opts: {
+export function flagsPage(opts: Flash & {
   viewer: Viewer;
   flags: FlagState[];
   cache: CacheState;
 }): string {
   const canFlip = opts.viewer.role === 'admin';
   return page(
-    { title: 'Kill switches', viewer: opts.viewer, path: '/admin/flags' },
+    { title: 'Kill switches', viewer: opts.viewer, path: '/admin/flags' , notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="max-width:900px;padding:26px 20px 60px">
   <h1>Kill switches</h1>
@@ -353,13 +358,13 @@ export function flagsPage(opts: {
     : html`<p class="notice">You can see the switches. Only an admin can move one.</p>`}
 
   <div class="stack" style="margin-top:18px">
-    ${opts.flags.map((f) => flagRow(f, canFlip))}
+    ${opts.flags.map((f) => flagRow(f, canFlip, opts.viewer))}
   </div>
 </div>`,
   );
 }
 
-function flagRow(f: FlagState, canFlip: boolean): Html {
+function flagRow(f: FlagState, canFlip: boolean, viewer: Viewer): Html {
   return html`
 <div class="card" style="padding:14px 16px">
   <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
@@ -373,7 +378,8 @@ function flagRow(f: FlagState, canFlip: boolean): Html {
       : null}
     ${canFlip
       ? html`
-        <form method="post" action="/api/admin/flags/${f.key}" style="margin-left:auto">
+        <form method="post" action="/admin/flags/${f.key}" style="margin-left:auto">
+          ${csrfField(viewer)}
           <input type="hidden" name="enabled" value="${f.enabled ? 'false' : 'true'}">
           <button class="btn btn-sm${f.enabled ? '' : ' btn-primary'}" type="submit">
             ${f.enabled ? 'Turn off' : 'Turn on'}

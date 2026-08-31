@@ -14,7 +14,8 @@ import {
   queuePage, listingReviewPage, messageReviewPage, flagsPage,
 } from './pages-admin.js';
 import { AMENITIES, PROPERTY_TYPES } from '../modules/listings/policy.js';
-import { SESSION_COOKIE, parseCookies } from '../lib/session.js';
+import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
+import { flashOf } from './form.js';
 import type { Viewer } from './layout.js';
 import type { App } from '../http/app.js';
 import type { QueueState } from '../modules/admin/moderation.js';
@@ -37,10 +38,18 @@ function respond(body: string, status = 200): Response {
 }
 
 async function viewerOf(app: App, req: Request): Promise<Viewer | null> {
-  const token = parseCookies(req.headers.get('cookie') ?? undefined)[SESSION_COOKIE];
+  const cookies = parseCookies(req.headers.get('cookie') ?? undefined);
+  const token = cookies[SESSION_COOKIE];
   if (!token) return null;
   const s = await app.auth.resolveSession(token);
-  return s ? { userId: s.userId, role: s.role } : null;
+  if (!s) return null;
+  // The CSRF token rides on the viewer so every form the page renders can
+  // echo it back in a hidden field. Its cookie is deliberately readable —
+  // that is the "double submit" half of the defence.
+  return {
+    userId: s.userId, role: s.role,
+    ...(cookies[CSRF_COOKIE] ? { csrfToken: cookies[CSRF_COOKIE] } : {}),
+  };
 }
 
 /** Sends an anonymous visitor to sign in, and remembers where they were going. */
@@ -74,7 +83,7 @@ function notFound(viewer: Viewer | null): Response {
 export async function signUpRoute(req: Request, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
   if (viewer) return Response.redirect(new URL('/', req.url).toString(), 302);
-  return respond(signUpPage({}));
+  return respond(signUpPage(flashOf(new URL(req.url))));
 }
 
 // ── owner ───────────────────────────────────────────────────────────────────
@@ -83,7 +92,7 @@ export async function ownerListingsRoute(req: Request, app: App): Promise<Respon
   const viewer = await viewerOf(app, req);
   if (!viewer) return toSignIn(req);
   const listings = await app.listings.listForOwner(viewer.userId, { limit: 50 });
-  return respond(ownerListingsPage({ viewer, listings }));
+  return respond(ownerListingsPage({ viewer, listings, ...flashOf(new URL(req.url)) }));
 }
 
 export async function newListingRoute(req: Request, app: App): Promise<Response> {
@@ -94,6 +103,7 @@ export async function newListingRoute(req: Request, app: App): Promise<Response>
   const aiEnabled = await app.flags.isEnabled('ai.listing_builder', viewer.userId);
   return respond(newListingPage({
     viewer, propertyTypes: PROPERTY_TYPES, amenities: AMENITIES, aiEnabled,
+    ...flashOf(new URL(req.url)),
   }));
 }
 
@@ -103,7 +113,7 @@ export async function inboxRoute(req: Request, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
   if (!viewer) return toSignIn(req);
   const threads = await app.messaging.listThreads(viewer.userId, { limit: 50 });
-  return respond(inboxPage({ viewer, threads }));
+  return respond(inboxPage({ viewer, threads, ...flashOf(new URL(req.url)) }));
 }
 
 export async function threadRoute(req: Request, id: string, app: App): Promise<Response> {
@@ -113,7 +123,7 @@ export async function threadRoute(req: Request, id: string, app: App): Promise<R
     // getThread already refuses a thread the caller is not party to, with a
     // 404 — so this page inherits that check rather than repeating it.
     const thread = await app.messaging.getThread(id, viewer.userId);
-    return respond(threadPage({ viewer, thread }));
+    return respond(threadPage({ viewer, thread, ...flashOf(new URL(req.url)) }));
   } catch {
     return notFound(viewer);
   }
@@ -135,7 +145,7 @@ export async function queueRoute(req: Request, app: App): Promise<Response> {
     app.moderation.list({ state, limit: 50 }),
     app.moderation.stats(),
   ]);
-  return respond(queuePage({ viewer, items, stats, state }));
+  return respond(queuePage({ viewer, items, stats, state, ...flashOf(new URL(req.url)) }));
 }
 
 export async function listingReviewRoute(req: Request, id: string, app: App): Promise<Response> {
@@ -147,6 +157,7 @@ export async function listingReviewRoute(req: Request, id: string, app: App): Pr
     const reports = await app.reports.forSubject('listing', id);
     return respond(listingReviewPage({
       viewer,
+      ...flashOf(new URL(req.url)),
       listing: {
         id: l.id, title: l.title, description: l.description,
         descriptionSource: l.descriptionSource, priceCents: l.priceCents,
@@ -179,7 +190,7 @@ export async function messageReviewRoute(req: Request, id: string, app: App): Pr
       userId: viewer.userId,
       role: viewer.role as 'staff' | 'admin',
     });
-    return respond(messageReviewPage({ viewer, message: m }));
+    return respond(messageReviewPage({ viewer, message: m, ...flashOf(new URL(req.url)) }));
   } catch {
     return notFound(viewer);
   }
@@ -190,7 +201,7 @@ export async function flagsRoute(req: Request, app: App): Promise<Response> {
   if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(viewer);
 
   const [flags, cache] = await Promise.all([app.flags.list(), app.flags.cacheState()]);
-  return respond(flagsPage({ viewer, flags, cache }));
+  return respond(flagsPage({ viewer, flags, cache, ...flashOf(new URL(req.url)) }));
 }
 
 // ── media ───────────────────────────────────────────────────────────────────

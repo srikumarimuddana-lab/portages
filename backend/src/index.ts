@@ -47,6 +47,12 @@ import {
   signUpRoute, ownerListingsRoute, newListingRoute, inboxRoute, threadRoute,
   queueRoute, listingReviewRoute, messageReviewRoute, flagsRoute, mediaRoute,
 } from './web/routes-app.js';
+import {
+  signInAction, signUpAction, signOutAction,
+  createListingAction, transitionListingAction,
+  enquireAction, replyAction, blockThreadAction, reportAction,
+  decideListingAction, decideMessageAction, dismissQueueAction, setFlagAction,
+} from './web/actions.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -158,6 +164,32 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/admin/listings/:id', (req, p) => listingReviewRoute(req, p['id']!, app));
   route('GET', '/admin/messages/:id', (req, p) => messageReviewRoute(req, p['id']!, app));
   route('GET', '/admin/flags', (req) => flagsRoute(req, app));
+
+  // ── form posts ─────────────────────────────────────────────────────────
+  // Distinct paths from the JSON API on purpose: these accept
+  // application/x-www-form-urlencoded with a CSRF value in a hidden field,
+  // and answer with a 303 rather than JSON. The API keeps its own contract.
+  route('POST', '/signin', (req) => signInAction(req, app));
+  route('POST', '/signup', (req) => signUpAction(req, app));
+  route('POST', '/signout', (req) => signOutAction(req, app));
+  route('POST', '/reports', (req) => reportAction(req, app));
+
+  route('POST', '/dashboard/listings', (req) => createListingAction(req, app));
+  route('POST', '/dashboard/listings/:id/transition',
+    (req, p) => transitionListingAction(req, p['id']!, app));
+
+  route('POST', '/listings/:id/enquire', (req, p) => enquireAction(req, p['id']!, app));
+  route('POST', '/messages/:id/reply', (req, p) => replyAction(req, p['id']!, app));
+  route('POST', '/messages/:id/block', (req, p) => blockThreadAction(req, p['id']!, app));
+  route('POST', '/messages/:id/unblock',
+    (req, p) => blockThreadAction(req, p['id']!, app, true));
+
+  route('POST', '/admin/queue/:id/dismiss', (req, p) => dismissQueueAction(req, p['id']!, app));
+  route('POST', '/admin/listings/:id/decide',
+    (req, p) => decideListingAction(req, p['id']!, app));
+  route('POST', '/admin/messages/:id/decide',
+    (req, p) => decideMessageAction(req, p['id']!, app));
+  route('POST', '/admin/flags/:key', (req, p) => setFlagAction(req, p['key']!, app));
 
   const reportDeps = { cfg: app.cfg, reports: app.reports, hsts: app.hsts };
   route('POST', '/api/reports', (req) => createReport(req, reportDeps));

@@ -107,16 +107,17 @@ const HOSTILE: ListingView = {
   address: { ...LISTING.address, addressLine: '<h1>injected</h1> 99 Fake St' },
 };
 
-const STAFF = { userId: 's', role: 'staff' as const };
-const ADMIN = { userId: 'a', role: 'admin' as const };
-const OWNER = { userId: 'o', role: 'user' as const };
+const CSRF = 'preview-csrf-token';
+const STAFF = { userId: 's', role: 'staff' as const, csrfToken: CSRF };
+const ADMIN = { userId: 'a', role: 'admin' as const, csrfToken: CSRF };
+const OWNER = { userId: 'o', role: 'user' as const, csrfToken: CSRF };
 
 const AT = new Date('2026-08-31T14:20:00Z');
 
 const PAGES: Array<[string, string]> = [
   ['home', homePage({ viewer: null, recent: CARDS, liveCount: 128 })],
   ['search', searchPage({
-    viewer: { userId: 'u1', role: 'user' },
+    viewer: { userId: 'u1', role: 'user', csrfToken: CSRF },
     query: 'two bed under $1500 with parking',
     results: { results: CARDS.slice(0, 6), sort: 'relevance' },
     reading: 'Two bedrooms, up to $1,500 a month, with parking.',
@@ -132,10 +133,19 @@ const PAGES: Array<[string, string]> = [
     results: { results: [], sort: 'relevance' },
   })],
   ['listing', listingPage({
+    viewer: { userId: 'u1', role: 'user', csrfToken: CSRF },
+    listing: LISTING, origin: 'https://portage.ca',
+  })],
+  ['listing-anon', listingPage({
     viewer: null, listing: LISTING, origin: 'https://portage.ca',
   })],
+  ['listing-flash', listingPage({
+    viewer: { userId: 'u1', role: 'user', csrfToken: CSRF },
+    listing: LISTING, origin: 'https://portage.ca',
+    notice: 'Sent. You will get an email when they reply.',
+  })],
   ['listing-owner', listingPage({
-    viewer: { userId: 'owner', role: 'user' },
+    viewer: { userId: 'owner', role: 'user', csrfToken: CSRF },
     listing: { ...LISTING, isOwner: true },
     origin: 'https://portage.ca',
   })],

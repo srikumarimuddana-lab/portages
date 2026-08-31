@@ -13,15 +13,15 @@
  * you get a "Publish" button that returns 409.
  */
 import { html, type Html } from './html.js';
-import { page, money, facts, type Viewer } from './layout.js';
+import { page, money, facts, csrfField, type Flash, type Viewer } from './layout.js';
 import type { ListingView } from '../modules/listings/service.js';
 import type { ThreadSummary, ThreadDetail } from '../modules/messaging/service.js';
 
 // ── sign up ─────────────────────────────────────────────────────────────────
 
-export function signUpPage(opts: { error?: string | null } = {}): string {
+export function signUpPage(opts: Flash = {}): string {
   return page(
-    { title: 'Create an account', viewer: null, path: '/signup' },
+    { title: 'Create an account', viewer: null, path: '/signup', notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="max-width:420px;padding:52px 20px">
   <h1>Create an account</h1>
@@ -29,7 +29,7 @@ export function signUpPage(opts: { error?: string | null } = {}): string {
     Free to browse, free to message, free to list. There is no paid tier.
   </p>
   ${opts.error ? html`<p class="notice notice-warn">${opts.error}</p>` : null}
-  <form method="post" action="/api/auth/signup" class="stack">
+  <form method="post" action="/signup" class="stack">
     <div class="field">
       <label for="email">Email</label>
       <input id="email" type="email" name="email" required autocomplete="email">
@@ -94,12 +94,12 @@ const ACTION_COPY: Record<string, string> = {
   archive: 'Archive',
 };
 
-export function ownerListingsPage(opts: {
+export function ownerListingsPage(opts: Flash & {
   viewer: Viewer;
   listings: ListingView[];
 }): string {
   return page(
-    { title: 'My listings', viewer: opts.viewer, path: '/dashboard/listings' },
+    { title: 'My listings', viewer: opts.viewer, path: '/dashboard/listings' , notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="padding:26px 20px 60px">
   <div style="display:flex;align-items:center;gap:16px;margin-bottom:18px">
@@ -115,12 +115,12 @@ export function ownerListingsPage(opts: {
              <p class="small">It is free, and it stays free.</p>
              <a class="btn btn-primary" href="/dashboard/listings/new">Post your first listing</a>
            </div>`
-    : html`<div class="stack">${opts.listings.map(ownerRow)}</div>`}
+    : html`<div class="stack">${opts.listings.map((l) => ownerRow(l, opts.viewer))}</div>`}
 </div>`,
   );
 }
 
-function ownerRow(l: ListingView): Html {
+function ownerRow(l: ListingView, viewer: Viewer): Html {
   const s = STATUS_COPY[l.status] ?? { label: l.status, cls: 'badge-draft', note: '' };
   return html`
 <div class="card" style="flex-direction:row;align-items:stretch">
@@ -149,7 +149,8 @@ function ownerRow(l: ListingView): Html {
             A template that decides for itself which transitions to offer is
             how a "Publish" button that returns 409 gets shipped. */
         (l.actions ?? []).map((a) => html`
-        <form method="post" action="/api/listings/${l.id}/transition" style="display:inline">
+        <form method="post" action="/dashboard/listings/${l.id}/transition" style="display:inline">
+          ${csrfField(viewer)}
           <input type="hidden" name="action" value="${a}">
           <button class="btn btn-sm${a === 'submit' ? ' btn-primary' : ''}" type="submit">
             ${ACTION_COPY[a] ?? a}
@@ -162,7 +163,7 @@ function ownerRow(l: ListingView): Html {
 
 // ── owner: new listing ──────────────────────────────────────────────────────
 
-export function newListingPage(opts: {
+export function newListingPage(opts: Flash & {
   viewer: Viewer;
   propertyTypes: readonly string[];
   amenities: readonly string[];
@@ -170,7 +171,7 @@ export function newListingPage(opts: {
   error?: string | null;
 }): string {
   return page(
-    { title: 'Post a listing', viewer: opts.viewer, path: '/dashboard/listings/new' },
+    { title: 'Post a listing', viewer: opts.viewer, path: '/dashboard/listings/new' , notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="max-width:680px;padding:30px 20px 60px">
   <h1>Post a listing</h1>
@@ -179,7 +180,8 @@ export function newListingPage(opts: {
   </p>
   ${opts.error ? html`<p class="notice notice-warn">${opts.error}</p>` : null}
 
-  <form method="post" action="/api/listings" class="stack" style="margin-top:22px">
+  <form method="post" action="/dashboard/listings" class="stack" style="margin-top:22px">
+    ${csrfField(opts.viewer)}
     <div class="field">
       <label for="mode">Listing type</label>
       <select id="mode" name="mode" required>
@@ -270,10 +272,10 @@ function numField(name: string, label: string, type: string, placeholder: string
 
 // ── inbox ───────────────────────────────────────────────────────────────────
 
-export function inboxPage(opts: { viewer: Viewer; threads: ThreadSummary[] }): string {
+export function inboxPage(opts: Flash & { viewer: Viewer; threads: ThreadSummary[] }): string {
   const unread = opts.threads.reduce((n, t) => n + t.unreadCount, 0);
   return page(
-    { title: unread > 0 ? `Messages (${unread})` : 'Messages', viewer: opts.viewer, path: '/messages' },
+    { title: unread > 0 ? `Messages (${unread})` : 'Messages', viewer: opts.viewer, path: '/messages' , notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="max-width:820px;padding:26px 20px 60px">
   <h1>Messages</h1>
@@ -314,11 +316,11 @@ function threadRow(t: ThreadSummary): Html {
 
 // ── one thread ──────────────────────────────────────────────────────────────
 
-export function threadPage(opts: { viewer: Viewer; thread: ThreadDetail }): string {
+export function threadPage(opts: Flash & { viewer: Viewer; thread: ThreadDetail }): string {
   const t = opts.thread;
   const closed = t.status === 'blocked';
   return page(
-    { title: t.listingTitle, viewer: opts.viewer, path: `/messages/${t.id}` },
+    { title: t.listingTitle, viewer: opts.viewer, path: `/messages/${t.id}` , notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="max-width:720px;padding:22px 20px 60px">
   <p class="small"><a href="/messages">← All messages</a></p>
@@ -351,20 +353,23 @@ export function threadPage(opts: { viewer: Viewer; thread: ThreadDetail }): stri
         ${t.blockedByMe ? html`You blocked it.` : null}
       </div>
       ${t.blockedByMe
-        ? html`<form method="post" action="/api/threads/${t.id}/unblock">
+        ? html`<form method="post" action="/messages/${t.id}/unblock">
+                 ${csrfField(opts.viewer)}
                  <button class="btn" type="submit">Unblock this conversation</button>
                </form>`
         : null}`
     : html`
-      <form method="post" action="/api/threads/${t.id}/messages" class="stack">
+      <form method="post" action="/messages/${t.id}/reply" class="stack">
+        ${csrfField(opts.viewer)}
         <div class="field">
           <label for="reply">Reply</label>
           <textarea id="reply" name="body" rows="4" required></textarea>
         </div>
         <button class="btn btn-primary" type="submit">Send</button>
       </form>
-      <form method="post" action="/api/threads/${t.id}/block"
+      <form method="post" action="/messages/${t.id}/block"
             style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+        ${csrfField(opts.viewer)}
         <button class="btn btn-sm" type="submit">Block this conversation</button>
         <p class="small muted" style="margin:8px 0 0">
           They will not be able to write to you about this listing again.

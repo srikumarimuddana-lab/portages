@@ -1,0 +1,366 @@
+/**
+ * Form handlers — the POST side of every page.
+ *
+ * Each one does the same four things: read and check the form, call a
+ * service, redirect. None of them decides anything. The listing state
+ * machine, the message scanner, the role gate and the audit writer all live
+ * where they already lived; this file is a second door onto them, not a
+ * second implementation.
+ *
+ * Every handler ends in a redirect, including the failures — see form.ts for
+ * why. The result is that refreshing a page can never resend a message,
+ * republish a listing, or re-approve something.
+ */
+import {
+  ABSOLUTE_TTL_MS, CSRF_COOKIE, SESSION_COOKIE, serializeCookie, clearCookie,
+} from '../lib/session.js';
+import { readForm, redirectTo, messageFor, FormError } from './form.js';
+import { AMENITIES, PROPERTY_TYPES } from '../modules/listings/policy.js';
+import { REPORT_KINDS } from '../modules/trust/reports.js';
+import type { App } from '../http/app.js';
+import type { ReportKind } from '../modules/trust/reports.js';
+
+/** Where to send someone after a failure, with the reason attached. */
+function fail(path: string, err: unknown): Response {
+  return redirectTo(path, { error: messageFor(err).message });
+}
+
+function sessionCookies(sessionToken: string, csrfToken: string, secure: boolean): string[] {
+  return [
+    serializeCookie(SESSION_COOKIE, sessionToken, { secure, maxAgeMs: ABSOLUTE_TTL_MS }),
+    // Not HttpOnly, on purpose: the page has to echo this value back, either
+    // in a hidden field (forms) or a header (the JSON API). That is the
+    // "double submit" half — an attacker's site cannot read it cross-origin.
+    serializeCookie(CSRF_COOKIE, csrfToken, { secure, maxAgeMs: ABSOLUTE_TTL_MS, httpOnly: false }),
+  ];
+}
+
+/**
+ * Only same-origin paths. A `next` parameter that accepts an absolute URL is
+ * an open redirect, and an open redirect on a sign-in page is a phishing
+ * primitive: the attacker's link genuinely goes to portage.ca first.
+ */
+function safeNext(raw: string): string {
+  return raw.startsWith('/') && !raw.startsWith('//') ? raw : '/';
+}
+
+// ── auth ────────────────────────────────────────────────────────────────────
+
+export async function signInAction(req: Request, app: App): Promise<Response> {
+  let next = '/';
+  try {
+    const { fields } = await readForm(req, app, { requireAuth: false });
+    next = safeNext(fields.get('next'));
+
+    const issued = await app.auth.login({
+      email: fields.get('email'),
+      password: fields.get('password'),
+      ip: 'form',
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    });
+    return redirectTo(next, {
+      cookies: sessionCookies(issued.sessionToken, issued.csrfToken, app.secureCookies),
+    });
+  } catch (err) {
+    // Deliberately not "no such account" — AuthService already refuses to
+    // distinguish a wrong password from an unknown email, and saying so here
+    // would undo that by making the page an account-enumeration oracle.
+    return redirectTo(
+      `/signin${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`,
+      { error: 'That email and password did not match.' },
+    );
+  }
+}
+
+export async function signUpAction(req: Request, app: App): Promise<Response> {
+  try {
+    const { fields } = await readForm(req, app, { requireAuth: false });
+    const issued = await app.auth.signup({
+      email: fields.get('email'),
+      password: fields.get('password'),
+      ip: 'form',
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    });
+    return redirectTo('/dashboard/listings', {
+      notice: 'Welcome to Portage. Check your email to confirm your address.',
+      cookies: sessionCookies(issued.sessionToken, issued.csrfToken, app.secureCookies),
+    });
+  } catch (err) {
+    return fail('/signup', err);
+  }
+}
+
+export async function signOutAction(req: Request, app: App): Promise<Response> {
+  try {
+    const { sessionId } = await readForm(req, app);
+    // The SESSION id, not the user's. logout() revokes a session row by its
+    // own id; a user id there would compile, run, revoke nothing, and leave
+    // the person signed in while the page told them they were out.
+    if (sessionId) await app.auth.logout(sessionId);
+  } catch {
+    // Signing out must succeed from the user's point of view whatever the
+    // server thinks. Clearing the cookies is what actually ends the session
+    // in the browser, and that happens either way.
+  }
+  return redirectTo('/', {
+    notice: 'Signed out.',
+    cookies: [
+      clearCookie(SESSION_COOKIE, app.secureCookies),
+      clearCookie(CSRF_COOKIE, app.secureCookies),
+    ],
+  });
+}
+
+// ── listings ────────────────────────────────────────────────────────────────
+
+export async function createListingAction(req: Request, app: App): Promise<Response> {
+  try {
+    const { viewer, fields } = await readForm(req, app);
+
+    const mode = fields.get('mode');
+    if (mode !== 'rent' && mode !== 'sale') throw new FormError('Choose rent or sale.');
+
+    const propertyType = fields.get('propertyType');
+    if (!PROPERTY_TYPES.includes(propertyType as never)) {
+      throw new FormError('Choose a property type.');
+    }
+
+    // Dollars in the form, cents in the database. Doing this conversion in the
+    // handler rather than the service keeps cents as the only unit any
+    // business rule ever sees — the price bands, the search filters and the
+    // display formatter all agree because none of them know about dollars.
+    const dollars = fields.num('priceDollars');
+    if (dollars === undefined || dollars <= 0) throw new FormError('Enter a price.');
+
+    const amenities = fields.all('amenities').filter((a) => AMENITIES.includes(a as never));
+
+    await app.listings.create({
+      ownerId: viewer!.userId,
+      mode,
+      propertyType: propertyType as never,
+      priceCents: Math.round(dollars * 100),
+      title: fields.get('title'),
+      address: {
+        addressLine: fields.get('addressLine'),
+        city: fields.get('city') || 'Regina',
+        province: fields.get('province') || 'SK',
+        ...(fields.get('unit') ? { unit: fields.get('unit') } : {}),
+      },
+      ...(fields.get('description') ? { description: fields.get('description') } : {}),
+      ...(fields.int('beds') !== undefined ? { beds: fields.int('beds') } : {}),
+      ...(fields.num('baths') !== undefined ? { baths: fields.num('baths') } : {}),
+      ...(fields.int('sqft') !== undefined ? { sqft: fields.int('sqft') } : {}),
+      ...(amenities.length > 0 ? { amenities } : {}),
+    });
+
+    return redirectTo('/dashboard/listings', {
+      notice: 'Saved as a draft. Add photos, then submit it for review.',
+    });
+  } catch (err) {
+    return fail('/dashboard/listings/new', err);
+  }
+}
+
+export async function transitionListingAction(
+  req: Request, listingId: string, app: App,
+): Promise<Response> {
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    const action = fields.get('action');
+
+    // The service owns the state machine and refuses anything it does not
+    // allow — including a staff member trying to approve their own listing.
+    // This passes the string straight through rather than second-guessing it.
+    const out = await app.listings.transition(
+      listingId,
+      { userId: viewer!.userId, role: viewer!.role },
+      action as never,
+      { ...(fields.get('reason') ? { reason: fields.get('reason') } : {}), ip: 'form' },
+    );
+
+    return redirectTo('/dashboard/listings', {
+      notice: out.status === 'pending_review'
+        ? 'Submitted. We review new listings before they go public, usually within a day.'
+        : `Listing is now ${out.status.replace(/_/g, ' ')}.`,
+    });
+  } catch (err) {
+    return fail('/dashboard/listings', err);
+  }
+}
+
+// ── messaging ───────────────────────────────────────────────────────────────
+
+export async function enquireAction(req: Request, listingId: string, app: App): Promise<Response> {
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    const out = await app.messaging.startThread({
+      listingId,
+      inquirerId: viewer!.userId,
+      body: fields.get('body'),
+    });
+
+    // A blocked message is not an error. The sender is told plainly, because
+    // the alternative — silence, or a fake success — teaches people that the
+    // site swallows messages.
+    if (!out.ok) {
+      return redirectTo(`/listings/${listingId}`, { error: out.notice });
+    }
+    return redirectTo(`/messages/${out.threadId}`, {
+      notice: 'Sent. You will get an email when they reply.',
+    });
+  } catch (err) {
+    return fail(`/listings/${listingId}`, err);
+  }
+}
+
+export async function replyAction(req: Request, threadId: string, app: App): Promise<Response> {
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    const out = await app.messaging.reply({
+      threadId,
+      senderId: viewer!.userId,
+      body: fields.get('body'),
+    });
+    return out.ok
+      ? redirectTo(`/messages/${threadId}`)
+      : redirectTo(`/messages/${threadId}`, { error: out.notice });
+  } catch (err) {
+    return fail(`/messages/${threadId}`, err);
+  }
+}
+
+export async function blockThreadAction(
+  req: Request, threadId: string, app: App, unblock = false,
+): Promise<Response> {
+  try {
+    const { viewer } = await readForm(req, app);
+    if (unblock) {
+      await app.messaging.unblock(threadId, viewer!.userId);
+      return redirectTo(`/messages/${threadId}`, { notice: 'Unblocked.' });
+    }
+    await app.messaging.block(threadId, viewer!.userId);
+    return redirectTo(`/messages/${threadId}`, {
+      notice: 'Blocked. They cannot write to you about this listing again.',
+    });
+  } catch (err) {
+    return fail(`/messages/${threadId}`, err);
+  }
+}
+
+// ── reports ─────────────────────────────────────────────────────────────────
+
+export async function reportAction(req: Request, app: App): Promise<Response> {
+  const back = new URL(req.url).searchParams.get('from') ?? '/';
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    const kind = fields.get('kind');
+    if (!REPORT_KINDS.includes(kind as ReportKind)) throw new FormError('Choose a reason.');
+
+    await app.reports.create({
+      reporterId: viewer!.userId,
+      subjectType: 'listing',
+      subjectId: fields.get('subjectId'),
+      kind: kind as ReportKind,
+      ...(fields.get('detail') ? { detail: fields.get('detail') } : {}),
+    });
+    return redirectTo(safeNext(back), {
+      notice: 'Thank you. A moderator will look at this.',
+    });
+  } catch (err) {
+    return fail(safeNext(back), err);
+  }
+}
+
+// ── staff ───────────────────────────────────────────────────────────────────
+
+/**
+ * Staff form posts.
+ *
+ * The role is checked here as well as in the service, and the answer to a
+ * caller without it is a 404-shaped redirect rather than a 403 — the same
+ * rule the pages and the JSON routes follow, so guessing a URL still teaches
+ * a stranger nothing.
+ */
+function assertStaff(viewer: { role: string } | null): void {
+  if (!viewer || (viewer.role !== 'staff' && viewer.role !== 'admin')) {
+    throw new FormError('Not found.', 404);
+  }
+}
+
+export async function decideListingAction(
+  req: Request, listingId: string, app: App,
+): Promise<Response> {
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    assertStaff(viewer);
+
+    const action = fields.get('action');
+    if (action !== 'approve' && action !== 'reject') throw new FormError('Unknown decision.');
+    if (action === 'reject' && !fields.get('reason')) {
+      throw new FormError('Give a reason. The owner is shown it, and a rejection without one gets resubmitted unchanged.');
+    }
+
+    await app.listings.transition(
+      listingId,
+      { userId: viewer!.userId, role: viewer!.role },
+      action,
+      { ...(fields.get('reason') ? { reason: fields.get('reason') } : {}), ip: 'form' },
+    );
+    return redirectTo('/admin/queue', {
+      notice: action === 'approve' ? 'Approved and published.' : 'Rejected, and the owner told why.',
+    });
+  } catch (err) {
+    return fail(`/admin/listings/${listingId}`, err);
+  }
+}
+
+export async function decideMessageAction(
+  req: Request, messageId: string, app: App,
+): Promise<Response> {
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    assertStaff(viewer);
+
+    const staff = { userId: viewer!.userId, role: viewer!.role as 'staff' | 'admin', ip: 'form' };
+    if (fields.get('action') === 'release') {
+      await app.messaging.release(messageId, staff);
+      return redirectTo('/admin/queue', { notice: 'Released and delivered.' });
+    }
+    await app.messaging.uphold(messageId, staff);
+    return redirectTo('/admin/queue', { notice: 'Block upheld. The message stays withheld.' });
+  } catch (err) {
+    return fail(`/admin/messages/${messageId}`, err);
+  }
+}
+
+export async function dismissQueueAction(req: Request, itemId: string, app: App): Promise<Response> {
+  try {
+    const { viewer } = await readForm(req, app);
+    assertStaff(viewer);
+    await app.moderation.dismiss(itemId, viewer!.userId);
+    return redirectTo('/admin/queue', { notice: 'Closed.' });
+  } catch (err) {
+    return fail('/admin/queue', err);
+  }
+}
+
+export async function setFlagAction(req: Request, key: string, app: App): Promise<Response> {
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    // Admin only, not staff — a part-time moderator working the queue must
+    // not be able to turn email off for the whole site.
+    if (!viewer || viewer.role !== 'admin') throw new FormError('Not found.', 404);
+
+    const enabled = fields.get('enabled') === 'true';
+    const flag = await app.flags.set(
+      key,
+      { enabled, ...(fields.get('note') ? { note: fields.get('note') } : {}) },
+      { userId: viewer.userId, role: viewer.role, ip: 'form' },
+    );
+    return redirectTo('/admin/flags', {
+      notice: `${flag.label} is now ${flag.enabled ? 'on' : 'off'}. It takes effect everywhere within about ten seconds.`,
+    });
+  } catch (err) {
+    return fail('/admin/flags', err);
+  }
+}

@@ -17,8 +17,9 @@
  * That split is the point: the pages are a read surface. Nothing here mutates
  * anything.
  */
-import { SESSION_COOKIE, parseCookies } from '../lib/session.js';
+import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
 import { homePage, searchPage, listingPage, signInPage } from './pages.js';
+import { flashOf } from './form.js';
 import type { Viewer } from './layout.js';
 import type { App } from '../http/app.js';
 
@@ -52,10 +53,17 @@ function respond(body: string, status = 200, extra: Record<string, string> = {})
  * public pages are public.
  */
 async function viewerOf(app: App, req: Request): Promise<Viewer | null> {
-  const token = parseCookies(req.headers.get('cookie') ?? undefined)[SESSION_COOKIE];
+  const cookies = parseCookies(req.headers.get('cookie') ?? undefined);
+  const token = cookies[SESSION_COOKIE];
   if (!token) return null;
   const session = await app.auth.resolveSession(token);
-  return session ? { userId: session.userId, role: session.role } : null;
+  if (!session) return null;
+  // The CSRF token comes from its own cookie, which is deliberately readable.
+  // Every form the page renders echoes it back in a hidden field.
+  return {
+    userId: session.userId, role: session.role,
+    ...(cookies[CSRF_COOKIE] ? { csrfToken: cookies[CSRF_COOKIE] } : {}),
+  };
 }
 
 export async function homeRoute(req: Request, app: App): Promise<Response> {
@@ -68,6 +76,7 @@ export async function homeRoute(req: Request, app: App): Promise<Response> {
     viewer,
     recent: recent.results,
     liveCount: recent.results.length,
+    ...flashOf(new URL(req.url)),
   }));
 }
 
@@ -85,7 +94,7 @@ export async function searchRoute(req: Request, app: App): Promise<Response> {
     limit: 24,
   });
 
-  return respond(searchPage({ viewer, query: q, results }));
+  return respond(searchPage({ viewer, query: q, results, ...flashOf(new URL(req.url)) }));
 }
 
 export async function listingRoute(req: Request, id: string, app: App): Promise<Response> {
@@ -99,7 +108,7 @@ export async function listingRoute(req: Request, id: string, app: App): Promise<
       role: viewer?.role ?? 'user',
     });
     const origin = app.env.publicOrigin || new URL(req.url).origin;
-    return respond(listingPage({ viewer, listing, origin }));
+    return respond(listingPage({ viewer, listing, origin, ...flashOf(new URL(req.url)) }));
   } catch {
     return respond(notFoundPage(viewer), 404);
   }
@@ -109,7 +118,7 @@ export async function signInRoute(req: Request, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
   if (viewer) return Response.redirect(new URL('/', req.url).toString(), 302);
   const next = new URL(req.url).searchParams.get('next');
-  return respond(signInPage({ next }));
+  return respond(signInPage({ next, ...flashOf(new URL(req.url)) }));
 }
 
 function notFoundPage(viewer: Viewer | null): string {

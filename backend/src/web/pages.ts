@@ -14,13 +14,13 @@
  * is the one architecture that cannot do that.
  */
 import { html, raw, jsonScript, safeUrl, type Html } from './html.js';
-import { page, money, facts, amenityLabel, type Viewer } from './layout.js';
+import { page, money, facts, amenityLabel, csrfField, type Flash, type Viewer } from './layout.js';
 import type { SearchPage, SearchResultCard } from '../modules/search/service.js';
 import type { ListingView } from '../modules/listings/service.js';
 
 // ── home ────────────────────────────────────────────────────────────────────
 
-export function homePage(opts: {
+export function homePage(opts: Flash & {
   viewer: Viewer | null;
   recent: SearchResultCard[];
   liveCount: number;
@@ -32,6 +32,7 @@ export function homePage(opts: {
         'Portage lists homes for rent and sale in Regina, Saskatchewan, posted '
         + 'directly by their owners. No commission, no listing fee, no agent in between.',
       viewer: opts.viewer,
+      notice: opts.notice, error: opts.error,
       path: '/',
     },
     html`
@@ -66,7 +67,7 @@ export function homePage(opts: {
 
 // ── search ──────────────────────────────────────────────────────────────────
 
-export interface SearchPageOptions {
+export interface SearchPageOptions extends Flash {
   viewer: Viewer | null;
   query: string;
   results: SearchPage;
@@ -83,6 +84,7 @@ export function searchPage(o: SearchPageOptions): string {
       title: o.query ? `${o.query} — Regina listings` : 'Search Regina listings',
       description: 'Search owner-direct homes for rent and sale in Regina, Saskatchewan.',
       viewer: o.viewer,
+      notice: o.notice, error: o.error,
       path: '/search',
     },
     html`
@@ -139,7 +141,7 @@ function fallbackMessage(reason: string): string {
 
 // ── listing detail ──────────────────────────────────────────────────────────
 
-export function listingPage(opts: {
+export function listingPage(opts: Flash & {
   viewer: Viewer | null;
   listing: ListingView;
   origin: string;
@@ -153,6 +155,7 @@ export function listingPage(opts: {
       title: `${l.title} — ${l.address.city}`,
       description: (l.description ?? summary).slice(0, 300),
       viewer: opts.viewer,
+      notice: opts.notice, error: opts.error,
       path: `/listings/${l.id}`,
       // Schema.org, so a Google result shows the price and beds rather than a
       // bare blue link. Built from the row, never from the description — the
@@ -206,8 +209,18 @@ export function listingPage(opts: {
 
     ${l.isOwner
       ? html`<a class="btn" href="/dashboard/listings">Manage this listing</a>`
+      : !opts.viewer
+      ? html`
+        <a class="btn btn-primary" style="width:100%"
+           href="/signin?next=${encodeURIComponent(`/listings/${l.id}`)}">
+          Sign in to message the owner
+        </a>
+        <p class="small muted" style="margin-top:12px">
+          Free, and it is how we keep a record if something goes wrong.
+        </p>`
       : html`
         <form method="post" action="/listings/${l.id}/enquire" class="stack">
+          ${csrfField(opts.viewer!)}
           <div class="field">
             <label for="msg">Message the owner</label>
             <textarea id="msg" name="body" rows="4" required
@@ -322,9 +335,9 @@ function card(l: SearchResultCard): Html {
 
 // ── sign in ─────────────────────────────────────────────────────────────────
 
-export function signInPage(opts: { error?: string | null; next?: string | null }): string {
+export function signInPage(opts: Flash & { next?: string | null }): string {
   return page(
-    { title: 'Sign in', viewer: null, path: '/signin' },
+    { title: 'Sign in', viewer: null, path: '/signin', notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="max-width:400px;padding:52px 20px">
   <h1>Sign in</h1>
