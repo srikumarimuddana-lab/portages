@@ -21,6 +21,7 @@ import { Gazetteer } from '../modules/geo/gazetteer.js';
 import { SearchService } from '../modules/search/service.js';
 import { S3Storage } from '../modules/storage/s3.js';
 import { UploadService } from '../modules/storage/service.js';
+import { MessagingService } from '../modules/messaging/service.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
 import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
@@ -41,6 +42,9 @@ export interface App {
   search: SearchService;
   /** Absent when object storage is not configured; uploads report 503. */
   uploads: UploadService | null;
+  messaging: MessagingService;
+  /** Caps new enquiries per account, separate from the IP buckets. */
+  enquiryLimiter: DurableRateLimiter;
   /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
   identifierLimiter: DurableRateLimiter;
   cfg: GuardConfig;
@@ -120,6 +124,19 @@ async function build(): Promise<App> {
   // account. Tighter than the login limiter for the same reason.
   const identifierLimiter = new DurableRateLimiter(db, 'otp-id', { windowMs: 15 * 60_000, max: 5 });
 
+  const messaging = new MessagingService({
+    db,
+    notify,
+    appOrigin: env.publicOrigin || `http://localhost:${env.port}`,
+  });
+  // One account messaging every listing in the city is the abuse that matters
+  // here, and it looks like ordinary traffic to a per-IP bucket when the
+  // sender is on a phone with a rotating address.
+  const enquiryLimiter = new DurableRateLimiter(db, 'enquiry', {
+    windowMs: 60 * 60_000,
+    max: 20,
+  });
+
   const oauth = new OAuthService(db, {
     credentials: env.oauth,
     publicOrigin: env.publicOrigin,
@@ -143,7 +160,7 @@ async function build(): Promise<App> {
 
   return {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
-    gazetteer, search, uploads, identifierLimiter, cfg,
+    gazetteer, search, uploads, messaging, enquiryLimiter, identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,
   };

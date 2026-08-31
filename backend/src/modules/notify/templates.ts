@@ -77,8 +77,12 @@ const TEMPLATES: Record<TemplateId, TemplateDef> = {
   },
   message_received: {
     subject: 'New message about {{listingAddress}}',
-    text: 'You have a new message about {{listingAddress}}.\n\n{{link}}\n\nPortage never asks for payment before a viewing. Report anything that looks wrong.',
-    html: '<p>You have a new message about {{listingAddress}}.</p><p><a href="{{link}}">Read it on Portage</a></p><p>Portage never asks for payment before a viewing. Report anything that looks wrong.</p>',
+    // `preview` is deliberately allowed to be empty. The messaging layer omits
+    // it for any message moderation flagged, so a message we thought worth
+    // warning about in the app does not arrive in full in someone's inbox,
+    // where the warning is not. A missing variable renders as nothing.
+    text: 'You have a new message about {{listingAddress}}.\n\n{{preview}}\n\n{{link}}\n\nPortage never asks for payment before a viewing. Report anything that looks wrong.',
+    html: '<p>You have a new message about {{listingAddress}}.</p><blockquote>{{preview}}</blockquote><p><a href="{{link}}">Read it on Portage</a></p><p>Portage never asks for payment before a viewing. Report anything that looks wrong.</p>',
     commercial: false,
   },
   viewing_requested: {

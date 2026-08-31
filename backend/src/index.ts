@@ -30,6 +30,10 @@ import {
   searchListings, countListings, autocomplete, neighbourhoods, geoHealth,
 } from './http/routes/search.js';
 import { completeUpload, recordPreview } from './http/routes/uploads.js';
+import {
+  listThreads, unreadCount, getThread, startThread, replyToThread,
+  markThreadRead, archiveThread, blockThread, unblockThread, listingThreads,
+} from './http/routes/messages.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -110,6 +114,21 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/api/uploads/complete', (req) => completeUpload(req, uploadDeps));
   route('POST', '/api/uploads/preview', (req) => recordPreview(req, uploadDeps));
 
+  const msgDeps = {
+    cfg: app.cfg, messaging: app.messaging, hsts: app.hsts,
+    enquiryLimiter: app.enquiryLimiter,
+  };
+  // `/unread` before `/:id`, or the literal is read as a thread id.
+  route('GET', '/api/threads/unread', (req) => unreadCount(req, msgDeps));
+  route('GET', '/api/threads', (req) => listThreads(req, msgDeps));
+  route('POST', '/api/threads', (req) => startThread(req, msgDeps));
+  route('GET', '/api/threads/:id', (req, p) => getThread(req, p['id']!, msgDeps));
+  route('POST', '/api/threads/:id/messages', (req, p) => replyToThread(req, p['id']!, msgDeps));
+  route('POST', '/api/threads/:id/read', (req, p) => markThreadRead(req, p['id']!, msgDeps));
+  route('PUT', '/api/threads/:id/archive', (req, p) => archiveThread(req, p['id']!, msgDeps));
+  route('POST', '/api/threads/:id/block', (req, p) => blockThread(req, p['id']!, msgDeps));
+  route('DELETE', '/api/threads/:id/block', (req, p) => unblockThread(req, p['id']!, msgDeps));
+
   const listingDeps = { cfg: app.cfg, listings: app.listings, hsts: app.hsts };
   // `/mine` is registered before `/:id`. Matching is first-wins, so the
   // literal must come first or "mine" is read as a listing id.
@@ -126,6 +145,7 @@ async function buildRoutes(): Promise<void> {
     (req, p) => reorderPhotos(req, p['id']!, listingDeps));
   route('DELETE', '/api/listings/:id/photos/:photoId',
     (req, p) => removePhoto(req, p['id']!, p['photoId']!, listingDeps));
+  route('GET', '/api/listings/:id/threads', (req, p) => listingThreads(req, p['id']!, msgDeps));
 
   route('GET', '/api/documents', (req) => listDocuments(req, docDeps));
   route('POST', '/api/documents', (req) => createUpload(req, docDeps));
