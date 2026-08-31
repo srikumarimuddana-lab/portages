@@ -21,6 +21,7 @@ import type { ModerationService, QueueState, QueueSubject } from '../../modules/
 import type { ListingService } from '../../modules/listings/service.js';
 import type { MessagingService, StaffViewer } from '../../modules/messaging/service.js';
 import type { AuditService, AuditAction } from '../../modules/audit/service.js';
+import type { FlagService } from '../../modules/flags/service.js';
 import type { Sql } from '../../db/pool.js';
 
 export interface AdminRouteDeps {
@@ -30,6 +31,7 @@ export interface AdminRouteDeps {
   listings: ListingService;
   messaging: MessagingService;
   audit: AuditService;
+  flags: FlagService;
   hsts: boolean;
 }
 
@@ -48,6 +50,16 @@ const decideListingBody = v.object({
 
 const decideMessageBody = v.object({
   action: v.enumOf(['release', 'uphold'] as const),
+});
+
+const setFlagBody = v.object({
+  enabled: v.optional(v.boolean()),
+  // Bounds are re-checked in FlagService, which also refuses a partial
+  // rollout on a kill switch — the tier is its business, not the schema's.
+  rolloutPct: v.optional(v.integer({ min: 0, max: 100 })),
+  // Why. The most useful field on the screen at 3am when someone else threw
+  // the switch, so it is worth the character budget.
+  note: v.optional(v.string({ max: 500 })),
 });
 
 function ctxOf(requestId: string, origin: string | undefined, deps: AdminRouteDeps): ResponseContext {
@@ -236,6 +248,74 @@ export async function listAudit(req: Request, deps: AdminRouteDeps): Promise<Res
       ...(params.get('subjectId') ? { subjectId: params.get('subjectId')! } : {}),
     });
     return json({ entries }, ctxOf(ctx.requestId, ctx.origin, deps));
+  } catch (err) {
+    return errorResponse(err, ctxOf(id || 'unknown', origin, deps));
+  }
+}
+
+/**
+ * GET /api/admin/flags — every switch, thrown or not.
+ *
+ * Staff can SEE the switches, because "why did no email go out last night"
+ * is a moderator's question as often as an admin's, and the answer is on this
+ * screen. Only an admin can move one — see `setFlag`.
+ *
+ * Returns the cache state alongside. A console that shows "email: on" while
+ * the process has been unable to read the flag store for a minute is telling
+ * you something it does not know.
+ */
+export async function listFlags(req: Request, deps: AdminRouteDeps): Promise<Response> {
+  let id = '', origin: string | undefined;
+  try {
+    const { ctx } = await guard(req, deps.cfg, {
+      requireAuth: true, limit: 'read', requireRole: STAFF,
+    });
+    id = ctx.requestId; origin = ctx.origin;
+
+    const [flags, cache] = await Promise.all([
+      deps.flags.list(),
+      deps.flags.cacheState(),
+    ]);
+    return json({ flags, cache }, ctxOf(ctx.requestId, ctx.origin, deps));
+  } catch (err) {
+    return errorResponse(err, ctxOf(id || 'unknown', origin, deps));
+  }
+}
+
+/**
+ * POST /api/admin/flags/:key — throw or release one switch.
+ *
+ * **Admin only.** A part-time moderator working the queue must not be able to
+ * turn email off for the site; that is the same reason the audit log is
+ * admin-only, and it is the whole purpose of having two staff roles.
+ *
+ * This route is deliberately NOT flag-gated itself. A kill switch that could
+ * disable the console you use to release kill switches is a trap with no way
+ * out except a deploy — which is the thing this layer exists to avoid.
+ */
+export async function setFlag(req: Request, key: string, deps: AdminRouteDeps): Promise<Response> {
+  let id = '', origin: string | undefined;
+  try {
+    const { ctx, body } = await guard<{ enabled?: boolean; rolloutPct?: number; note?: string }>(
+      req, deps.cfg,
+      { requireAuth: true, limit: 'write', requireRole: ADMIN_ONLY, body: setFlagBody },
+    );
+    id = ctx.requestId; origin = ctx.origin;
+
+    if (body.enabled === undefined && body.rolloutPct === undefined) {
+      throw badRequest('Give enabled, rolloutPct, or both — there is nothing to change otherwise.');
+    }
+
+    const flag = await deps.flags.set(
+      key,
+      {
+        ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+        ...(body.rolloutPct !== undefined ? { rolloutPct: body.rolloutPct } : {}),
+        ...(body.note !== undefined ? { note: body.note } : {}),
+      },
+      { userId: ctx.principal!.userId, role: ctx.principal!.role, ip: ctx.clientIp },
+    );
+    return json({ flag }, ctxOf(ctx.requestId, ctx.origin, deps));
   } catch (err) {
     return errorResponse(err, ctxOf(id || 'unknown', origin, deps));
   }

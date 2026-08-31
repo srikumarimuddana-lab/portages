@@ -19,6 +19,7 @@ export async function adminDeps(): Promise<AdminRouteDeps> {
     listings: app.listings,
     messaging: app.messaging,
     audit: app.audit,
+    flags: app.flags,
     hsts: app.hsts,
   };
 }

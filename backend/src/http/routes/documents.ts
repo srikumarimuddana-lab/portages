@@ -61,7 +61,13 @@ export async function createUpload(req: Request, deps: DocRouteDeps): Promise<Re
     const { ctx, body } = await guard<{
       title: string; kind: never; mime: string; bytes: number;
       filename: string; propertyId?: string; threadId?: string;
-    }>(req, deps.cfg, { requireAuth: true, limit: 'write', body: createUploadBody });
+      // The other ticket-issuing route. A kill switch that stopped listing
+      // photos but left the document locker taking bytes would be a switch
+      // that does not do what its label says.
+    }>(req, deps.cfg, {
+      requireAuth: true, limit: 'write', body: createUploadBody,
+      requireFlag: 'uploads.new',
+    });
     id = ctx.requestId; origin = ctx.origin;
 
     const ticket = await deps.documents.createUpload({

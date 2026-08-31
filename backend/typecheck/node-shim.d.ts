@@ -48,7 +48,7 @@ declare module 'node:assert/strict' {
     ok(v: unknown, m?: string): asserts v;
     throws(fn: () => unknown, m?: unknown): void;
     doesNotThrow(fn: () => unknown, m?: unknown): void;
-    rejects(fn: () => Promise<unknown>, m?: unknown): Promise<void>;
+    rejects(fn: () => Promise<unknown>, m?: unknown, msg?: string): Promise<void>;
     doesNotReject(fn: () => Promise<unknown>, m?: unknown): Promise<void>;
     fail(m?: string): never;
   }

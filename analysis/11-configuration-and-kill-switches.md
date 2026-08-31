@@ -206,21 +206,93 @@ Not vapourware — the seams exist and are used:
 - **`requireRole` is live** on the admin routes, answering 404 rather than
   403, so the flag routes inherit a gate that is already tested.
 
-## 7. What still needs building (plan step 5)
+## 7. Built (plan step 6)
 
-1. Migration `015_flags.sql` + `.down.sql` for the table above.
-2. `modules/flags/` — a `FlagService` with a short in-process TTL cache
-   (5–10s: a warm serverless instance must not hold a stale "on" for
-   minutes) and the fail-safe defaults from §5.
-3. Replace the `ALLOW_ALL` default in the composition root.
-4. Check sites at every AI call and every outbound channel.
-5. `GET /api/admin/flags` and `POST /api/admin/flags/:key`, **admin only**,
-   writing `flag.set` to the audit log inside the transaction.
-6. A SQL contract asserting the fail-safe defaults and that a flip is
-   recorded.
+All of it, except the AI call sites — there are no AI features yet, so the
+switches for them are declared and checked and have nothing to guard. That is
+deliberate: a switch introduced alongside the feature it guards is a switch
+nobody has ever exercised, and these are read by `FlagService` from day one.
 
-**Gate:** flipping a switch takes effect in under 30 seconds without a
-deploy, and a disabled channel provably cannot send in test.
+| Piece | Where |
+|---|---|
+| Table | `migrations/015_flags.sql` + `.down.sql` |
+| Registry | `modules/flags/registry.ts` — the closed key union and the fail-safe per key |
+| Service | `modules/flags/service.ts` — cache, rollout buckets, audited writes |
+| Channel wiring | `NotifyService`'s `ALLOW_ALL` replaced in `http/app.ts` |
+| Route gating | `requireFlag` in `http/guard.ts`; declared on signup, listing create, both upload-ticket routes, and both OAuth routes |
+| Console | `GET /api/admin/flags` (staff) · `POST /api/admin/flags/:key` (**admin only**) |
+| Contract | `test/sql/flags.sql` |
+
+### Three states, not two
+
+The obvious cache is fresh-or-unavailable, falling back to the fail-safe on
+any read failure. That is wrong in the expensive direction: a two-second
+database blip would turn email off site-wide — the safety mechanism causing
+the outage it exists to prevent. So:
+
+| State | Age of snapshot | Behaviour |
+|---|---|---|
+| FRESH | < 10s | use it |
+| STALE | 10–60s | use it anyway |
+| BLIND | > 60s, or none | fail-safe |
+
+The middle state is the point. A five-second-old snapshot is knowledge, not
+ignorance, and the fail-safe is for ignorance. Nor can serving stale mask a
+decision somebody just made: writing a flag needs the same database that is
+unreachable.
+
+### Where the registry default is not the fail-safe
+
+Two different questions that look like one, and conflating them takes email
+down on a fresh install:
+
+- **No row has ever been written** → the registry *default*. A kill switch
+  has not been thrown, so it is **on**.
+- **The table cannot be read** → the registry *fail-safe*. For
+  `channel.email` that is **off**.
+
+### Two design rules enforced by the type system, not by comments
+
+- **`requireRole` and `requireFlag` are mutually exclusive.** A role-gated
+  route must answer 404 so a stranger cannot tell it exists; a switched-off
+  route answers 503, which says it does. No ordering satisfies both, so the
+  combination is a compile error. No admin route is ever flag-gated — the
+  console is how a thrown switch gets released, and a switch that can disable
+  its own off-switch has no exit but a deploy.
+- **A kill switch has no partial rollout.** "Email is 40% off" is not an
+  incident response. `set()` refuses it, and the tier field is what will make
+  it legal for the first genuine rollout flag.
+
+### What the switches do and do not interrupt
+
+`uploads.new` stops ticket issuance but not `completeUpload`: bytes already in
+flight land rather than becoming orphaned objects with no row. `oauth.*` gates
+the callback as well as the start, and the difference is deliberate — an
+upload completing after the switch is harmless, while a callback completing
+after it mints a session using the very credential the switch was thrown over.
+
+**Gate: met.** A flip lands within one 10s TTL, two full cycles inside the 30s
+budget. `test/flags.test.ts` drives a real `FlagService` off a real
+`feature_flags` row into a real `NotifyService` and proves the provider is
+never reached, then releases the switch and proves the same send goes through.
+
+### One thing the unit tests could not have caught
+
+The first version of `set()` passed NULL for whichever field a patch omitted,
+relying on `ON CONFLICT` to fill it in. `enabled` and `rollout_pct` are
+NOT NULL, so on a flag with no existing row there is no conflict to rescue the
+insert — **the very first flip of any switch would have failed**, which is
+both the common case and the worst possible moment. The fake `Sql` does not
+enforce NOT NULL and reported success; `test/sql/flags.sql` caught it against
+real PostgreSQL. The INSERT branch now supplies the registry default and only
+the UPDATE branch coalesces against the existing row.
+
+### Still open
+
+`ai.*` has no call sites until AI features exist. `feature_flags` has no
+seed — the registry is the source of truth for which flags exist, so an
+untouched flag shows its default rather than being invisible, and adding one
+needs no migration.
 
 ## 8. Break-glass order, for the runbook
 

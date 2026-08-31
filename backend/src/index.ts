@@ -37,6 +37,8 @@ import {
 import {
   listQueue, queueStats, getQueueItem, dismissQueueItem,
   decideListing, reviewMessage, decideMessage, listAudit,
+  listFlags,
+  setFlag,
 } from './http/routes/admin.js';
 import { preflight } from './http/respond.js';
 
@@ -121,7 +123,7 @@ async function buildRoutes(): Promise<void> {
   // Admin. Every one of these answers 404 to a caller without the role.
   const adminDeps = {
     cfg: app.cfg, db: app.db, moderation: app.moderation, listings: app.listings,
-    messaging: app.messaging, audit: app.audit, hsts: app.hsts,
+    messaging: app.messaging, audit: app.audit, flags: app.flags, hsts: app.hsts,
   };
   route('GET', '/api/admin/queue/stats', (req) => queueStats(req, adminDeps));
   route('GET', '/api/admin/queue', (req) => listQueue(req, adminDeps));
@@ -134,6 +136,8 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/api/admin/messages/:id/decide',
     (req, p) => decideMessage(req, p['id']!, adminDeps));
   route('GET', '/api/admin/audit', (req) => listAudit(req, adminDeps));
+  route('GET', '/api/admin/flags', (req) => listFlags(req, adminDeps));
+  route('POST', '/api/admin/flags/:key', (req, p) => setFlag(req, p['key']!, adminDeps));
 
   const msgDeps = {
     cfg: app.cfg, messaging: app.messaging, hsts: app.hsts,

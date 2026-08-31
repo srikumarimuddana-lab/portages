@@ -233,7 +233,7 @@ is fine. The first is the trap.
 | 3 | Message review + **release** | 2 | §1: the other half of a shipped decision | **shipped** |
 | 4 | Ops dashboard | 1 | Every number already exists in a table | |
 | 5 | Users + suspend | 1 | Enforcement is built; nothing triggers it | |
-| 6 | `feature_flags` + kill switches | 1 | New table — design in [11](11-configuration-and-kill-switches.md) | |
+| 6 | `feature_flags` + kill switches | 1 | New table — design in [11](11-configuration-and-kill-switches.md) | **shipped** |
 | 7 | Report control (public) + report queue | 2 | Human signal beats regex signal | |
 
 Steps 1–3 are the ones without which the product does not function. Everything
@@ -252,7 +252,8 @@ Writing the RBAC tests found a leak in the gate itself: `requireRole` ran
 an admin route. A 401 announces that a route exists as loudly as a 403 does.
 The gate now runs first.
 
-Two of the four gaps in §1 remain open: **there is still no producer for
+One of the four gaps in §1 remains open: **there is still no producer for
 `reports`** (step 7 — a user cannot report anything, so the queue holds only
-what the heuristics caught), and **`feature_flags` still does not exist**
-(step 6). `verifications` now has a reader in the OTP flow.
+what the heuristics caught). `feature_flags` now exists and is wired at every
+outbound channel and content-creation route; `verifications` has a reader in
+the OTP flow.

@@ -24,6 +24,7 @@ import { UploadService } from '../modules/storage/service.js';
 import { MessagingService } from '../modules/messaging/service.js';
 import { AuditService } from '../modules/audit/service.js';
 import { ModerationService } from '../modules/admin/moderation.js';
+import { FlagService } from '../modules/flags/service.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
 import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
@@ -47,6 +48,8 @@ export interface App {
   messaging: MessagingService;
   audit: AuditService;
   moderation: ModerationService;
+  /** Kill switches. Read by the guard, by notify, and by the admin console. */
+  flags: FlagService;
   /** Caps new enquiries per account, separate from the IP buckets. */
   enquiryLimiter: DurableRateLimiter;
   /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
@@ -72,6 +75,9 @@ async function build(): Promise<App> {
   // no rows for the period before it.
   const audit = new AuditService(env.pepper);
   const moderation = new ModerationService(db);
+  // Built before anything that reads a switch, and given the audit
+  // recorder so a flip cannot happen without a record of who flipped it.
+  const flags = new FlagService(db, { audit });
   const gazetteer = new Gazetteer(db);
   const search = new SearchService(db);
   // Object storage is optional. Without it the site still browses and
@@ -124,7 +130,12 @@ async function build(): Promise<App> {
         }
       : null,
   );
-  const notify = new NotifyService(db, [email, sms, new WhatsAppChannel()]);
+  // Replaces the ALLOW_ALL default NotifyService has carried since the
+  // notify module shipped. No call site in that file changes: the check was
+  // always there, it just always said yes.
+  const notify = new NotifyService(db, [email, sms, new WhatsAppChannel()], {
+    killSwitch: flags,
+  });
 
   const otp = new OtpService(db);
   const otpFlows = new OtpFlows({ db, otp, notify, auth });
@@ -157,6 +168,7 @@ async function build(): Promise<App> {
     auth,
     pepper: env.pepper,
     trustProxy: env.trustProxy,
+    flags,
     limiters: {
       // Shared counters in Postgres: warm serverless instances must not each
       // keep their own budget. Read paths fail open so a database blip does
@@ -170,7 +182,7 @@ async function build(): Promise<App> {
 
   return {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
-    gazetteer, search, uploads, messaging, audit, moderation,
+    gazetteer, search, uploads, messaging, audit, moderation, flags,
     enquiryLimiter, identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,

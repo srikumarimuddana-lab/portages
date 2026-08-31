@@ -457,3 +457,103 @@ test('guard: a staff route still enforces CSRF on writes', async () => {
     'staff write without CSRF',
   );
 });
+
+// ── kill switches at the gate ───────────────────────────────────────────────
+//
+// 503, not 403 or 404: the route exists, the caller is not the problem, and
+// it will work again. That is the one status a client can sensibly retry.
+
+const flagsOff = (off: readonly string[]) => ({
+  async isEnabled(key: string) { return !off.includes(key); },
+});
+
+test('guard: a thrown kill switch refuses the route with 503', async () => {
+  await expectError(
+    () => guard(req('POST', { origin: ORIGIN, body: {} }),
+      makeCfg({ flags: flagsOff(['signups.new']) as never }),
+      { requireAuth: false, limit: 'write', requireFlag: 'signups.new' }),
+    503,
+    'signups switched off',
+  );
+});
+
+test('guard: the message says what is off and what still works', async () => {
+  // "Temporarily unavailable" sends someone refreshing for an hour. Telling
+  // them existing accounts still sign in tells them whether to wait.
+  try {
+    await guard(req('POST', { origin: ORIGIN, body: {} }),
+      makeCfg({ flags: flagsOff(['signups.new']) as never }),
+      { requireAuth: false, limit: 'write', requireFlag: 'signups.new' });
+    assert.fail('expected a refusal');
+  } catch (err) {
+    assert.ok(err instanceof AppError);
+    assert.match(err.message, /existing accounts/i);
+    assert.equal(err.code, 'unavailable');
+  }
+});
+
+test('guard: an un-thrown switch lets the route through', async () => {
+  const { ctx } = await guard(req('POST', { origin: ORIGIN, body: {} }),
+    makeCfg({ flags: flagsOff([]) as never }),
+    { requireAuth: false, limit: 'write', requireFlag: 'signups.new' });
+  assert.equal(ctx.principal, null);
+});
+
+test('guard: the switch is checked AFTER the rate limit', async () => {
+  // Otherwise a switched-off endpoint becomes a free thing to hammer: the
+  // cheap refusal would run before the counter was incremented.
+  const limiter = new RateLimiter({ windowMs: 60_000, max: 1 });
+  const cfg = makeCfg({
+    flags: flagsOff(['signups.new']) as never,
+    limiters: { read: limiter, write: limiter, auth: limiter },
+  });
+  const call = () => guard(req('POST', { origin: ORIGIN, body: {} }), cfg,
+    { requireAuth: false, limit: 'write', requireFlag: 'signups.new' });
+
+  await expectError(call, 503, 'first call: switch');
+  await expectError(call, 429, 'second call: the limiter still counted the first');
+});
+
+test('guard: with no flag reader wired, the registry fail-safe applies', async () => {
+  // Not the same situation as the store being down, but the honest answer is
+  // the same one: we cannot read the flag, so use the value chosen for that.
+  const cfg = makeCfg();  // no `flags`
+
+  // signups.new fails OPEN — a deployment without the flags module must not
+  // have registration closed.
+  const { ctx } = await guard(req('POST', { origin: ORIGIN, body: {} }), cfg,
+    { requireAuth: false, limit: 'write', requireFlag: 'signups.new' });
+  assert.equal(ctx.principal, null);
+
+  // channel.email fails CLOSED, for the same asymmetry the registry states.
+  await expectError(
+    () => guard(req('POST', { origin: ORIGIN, body: {} }), cfg,
+      { requireAuth: false, limit: 'write', requireFlag: 'channel.email' }),
+    503,
+    'a money/mail flag with no reader',
+  );
+});
+
+test('guard: a role gate and a kill switch cannot be combined at all', async () => {
+  // The two rules collide and no ordering satisfies both: a role-gated route
+  // must answer 404 so a stranger cannot tell it exists, while a switched-off
+  // route answers 503, which says it does. Rather than pick, the combination
+  // is a type error — no admin route is ever flag-gated, because a switch
+  // that can disable its own off-switch is a trap.
+  //
+  // `typecheck:offline` covers this file, so the directive below IS the
+  // assertion: if the combination ever becomes legal, TypeScript reports the
+  // unused @ts-expect-error and the gate goes red.
+  const { m, cfg: base } = sessionAs('user');
+  const cfg = { ...base, flags: flagsOff(['listings.new']) as never };
+  const both = {
+    requireAuth: true, limit: 'read' as const,
+    requireRole: ['admin'] as const, requireFlag: 'listings.new' as const,
+  };
+  await expectError(
+    // @ts-expect-error requireRole and requireFlag are mutually exclusive
+    () => guard(asRole(m), cfg, both),
+    404,
+    'a role gate must still win if the combination is ever forced past the type',
+  );
+});
