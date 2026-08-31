@@ -6,7 +6,7 @@
  *
  *   1. Method + content type   (free)
  *   2. Origin allowlist        (free, and blocks cross-site writes early)
- *   3. Rate limit              (in-memory)
+ *   3. Rate limit              (local cache first, then shared Postgres state)
  *   4. Body size + JSON parse  (bounded)
  *   5. Session lookup          (one indexed query)
  *   6. CSRF                    (constant-time compare against stored digest)
@@ -24,10 +24,11 @@ import {
   verifyCsrf,
 } from '../lib/session.js';
 import { isJsonContentType, originAllowedForWrite, MAX_JSON_BYTES } from './headers.js';
-import { RateLimiter, type RateLimitRule } from '../lib/ratelimit.js';
+import type { Limiter } from '../lib/ratelimit-db.js';
 import {
   badRequest,
   forbidden,
+  notFound,
   payloadTooLarge,
   tooManyRequests,
   unauthorized,
@@ -35,10 +36,17 @@ import {
 } from '../lib/errors.js';
 import type { Schema } from '../lib/validate.js';
 import { generateToken, pseudonymize } from '../lib/crypto.js';
+import type { ResolvedSession, UserRole } from '../modules/auth/service.js';
 
 export interface Principal {
   userId: string;
   sessionId: string;
+  /**
+   * Resolved from the database on every request, never from the cookie. A
+   * role carried in a token is a role that keeps working after it is taken
+   * away.
+   */
+  role: UserRole;
 }
 
 export interface GuardContext {
@@ -49,7 +57,7 @@ export interface GuardContext {
 }
 
 export interface SessionResolver {
-  resolveSession(token: string): Promise<{ userId: string; sessionId: string; csrfHash: Buffer } | null>;
+  resolveSession(token: string): Promise<ResolvedSession | null>;
 }
 
 export interface GuardConfig {
@@ -57,10 +65,16 @@ export interface GuardConfig {
   auth: SessionResolver;
   pepper: string;
   trustProxy: boolean;
+  /**
+   * Both the in-process RateLimiter and the Postgres-backed
+   * DurableRateLimiter satisfy Limiter, so the transport does not care which
+   * is wired in. Production uses the durable one — see ratelimit-db.ts for
+   * why per-process counters are wrong on serverless.
+   */
   limiters: {
-    read: RateLimiter;
-    write: RateLimiter;
-    auth: RateLimiter;
+    read: Limiter;
+    write: Limiter;
+    auth: Limiter;
   };
 }
 
@@ -71,6 +85,8 @@ export interface GuardOptions {
   limit: keyof GuardConfig['limiters'];
   /** Validate and return the JSON body against this schema. */
   body?: Schema<unknown>;
+  /** Restrict to these roles. Implies requireAuth. */
+  requireRole?: readonly UserRole[];
 }
 
 export interface Guarded<T> {
@@ -123,7 +139,7 @@ export async function guard<T = undefined>(
   //    retained in memory or logs.
   const limiter = cfg.limiters[opts.limit];
   const key = pseudonymize(clientIp, cfg.pepper).toString('base64url');
-  const verdict = limiter.check(key);
+  const verdict = await limiter.check(key);
   if (!verdict.allowed) throw new RateLimitError(verdict.retryAfterSec);
 
   // 4. Body: bounded read, then parse. Content-Length is a hint, not a
@@ -152,11 +168,22 @@ export async function guard<T = undefined>(
   if (sessionToken) {
     const resolved = await cfg.auth.resolveSession(sessionToken);
     if (resolved) {
-      ctx.principal = { userId: resolved.userId, sessionId: resolved.sessionId };
+      ctx.principal = {
+        userId: resolved.userId,
+        sessionId: resolved.sessionId,
+        role: resolved.role,
+      };
       csrfHash = resolved.csrfHash;
     }
   }
   if (opts.requireAuth && !ctx.principal) throw unauthorized();
+
+  // Role gate. Deliberately a 404, not a 403: an admin route that answers
+  // "forbidden" to a non-staff caller has just confirmed the route exists and
+  // is worth attacking. To everyone without the role, it is not there.
+  if (opts.requireRole && (!ctx.principal || !opts.requireRole.includes(ctx.principal.role))) {
+    throw notFound();
+  }
 
   // 6. CSRF, for authenticated writes. An anonymous write (signup, login) has
   //    no session to protect, and the origin check above already covers it.

@@ -19,11 +19,21 @@ import { AppError } from '../src/lib/errors.js';
 const ORIGIN = 'https://portage.ca';
 const ALLOWED = [ORIGIN];
 
+type FakeSession = {
+  userId: string;
+  sessionId: string;
+  csrfHash: Buffer;
+  role?: 'user' | 'staff' | 'admin';
+};
+
 /** A session resolver backed by a map, standing in for the database. */
-function fakeAuth(sessions: Map<string, { userId: string; sessionId: string; csrfHash: Buffer }>) {
+function fakeAuth(sessions: Map<string, FakeSession>) {
   return {
     async resolveSession(token: string) {
-      return sessions.get(token) ?? null;
+      const s = sessions.get(token);
+      // The real resolver reads the role from `users` on every request; the
+      // fake defaults it so existing cases need no change.
+      return s ? { ...s, role: s.role ?? ('user' as const) } : null;
     },
   };
 }
