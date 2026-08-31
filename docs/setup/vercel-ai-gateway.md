@@ -135,7 +135,7 @@ that is deliberate.
 | `VERCEL_OIDC_TOKEN` | one of these two | — | Provisioned automatically for a linked project. Read per request. |
 | `AI_GATEWAY_BASE_URL` | no | `https://ai-gateway.vercel.sh/v1` | Override for a self-hosted gateway or tests. |
 | `AI_MODEL_CHAT_SEARCH` | no | `anthropic/claude-haiku-4-5` | High volume, structured extraction. |
-| `AI_MODEL_LISTING_BUILDER` | no | `anthropic/claude-opus-5` | Output a person reads; quality matters. |
+| `AI_MODEL_LISTING_BUILDER` | no | `anthropic/claude-opus-5` | Output a person reads and puts their name to. |
 | `AI_MODEL_MODERATION` | no | `anthropic/claude-haiku-4-5` | High volume, classification. |
 
 **With none of them set, the site works.** Browsing, search, listings and
@@ -171,7 +171,54 @@ Three independent limits, and you want all three:
 Per-feature spend is attributable in the Gateway dashboard because every call
 sends `x-title: portage/<task>`.
 
+### What each feature actually costs to run
+
+Volume matters more than model price here, and the three features differ by
+orders of magnitude:
+
+| Feature | Called | Notes |
+|---|---|---|
+| `listing_builder` | once per listing draft | Hundreds a month at Regina scale. The expensive model is affordable precisely because it runs rarely. |
+| `chat_search` | once per natural-language search | Only when someone types a sentence rather than using filters. |
+| `moderation` | **not** once per message | Rules handle the obvious cases at zero cost; the model is consulted only in the ambiguous band, plus clean first contacts. |
+
+That last row is the one that would otherwise dominate the bill. Messaging is
+the highest-volume path on the site, and `shouldConsult` in
+`modules/ai/moderation.ts` is what keeps a second opinion from becoming a
+per-message charge: a message the rules are confident about — in either
+direction — never reaches a model.
+
 ---
+
+## Two safety properties worth knowing about
+
+**AI moderation can escalate; it can never de-escalate.** The rules in
+`messaging/policy.ts` run first and decide. The model may turn allow into
+flag, or flag into block, and that is all — enforced arithmetically by
+`floorVerdict`, and separately by never sending an already-blocked message to
+a model at all. The reason is direct: the message body is written by the
+person being moderated and goes into the prompt, so a model that could be
+talked down to "allow" would be a way for a scammer to approve their own
+message. The only route out of a block stays a human pressing release.
+
+**A listing draft is fact-checked before anyone sees it.** Competition Act
+s.74.01 makes a false material representation the platform's problem, not the
+model's — "heated garage" in a Regina listing is a fact someone signs a lease
+over. So the model is given a fact sheet built from what the owner actually
+entered, and the draft is then scanned for amenity claims the fact sheet does
+not support and for claims the system could not know at all (orientation,
+distances, how quiet the area is, renovations). A draft that fails is withheld
+rather than shown with warnings: an owner given plausible copy plus a list of
+caveats publishes the copy.
+
+Puffery is deliberately left alone. A check that rejects "charming" makes the
+feature useless, and nobody signs a lease because copy said charming.
+
+The database is the third guard and predates all of this: a draft is stored
+with `description_source = 'ai'`, and `listings_publish_guard` refuses to
+publish an AI description the owner has not attested — with the attestation
+cleared whenever the copy changes. Model writes, we verify, owner attests,
+database allows. Only one of those four is the model.
 
 ## Why the app does not depend on the SDK
 

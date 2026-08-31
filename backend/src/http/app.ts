@@ -27,6 +27,8 @@ import { ModerationService } from '../modules/admin/moderation.js';
 import { FlagService } from '../modules/flags/service.js';
 import { GatewayProvider } from '../modules/ai/adapters/gateway.js';
 import { ChatSearchService } from '../modules/ai/chat-search.js';
+import { ListingBuilderService } from '../modules/ai/listing-builder.js';
+import { AiModerationService } from '../modules/ai/moderation.js';
 import { UNCONFIGURED, type ModelProvider } from '../modules/ai/provider.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
@@ -57,6 +59,10 @@ export interface App {
   aiProvider: ModelProvider;
   /** Natural-language search. Present even when AI is off; the route checks the flag. */
   chatSearch: ChatSearchService;
+  /** Drafts listing copy from the owner's own facts, then fact-checks it. */
+  listingBuilder: ListingBuilderService;
+  /** Second opinion on ambiguous messages. Can escalate, never de-escalate. */
+  aiModeration: AiModerationService;
   /** Caps new enquiries per account, separate from the IP buckets. */
   enquiryLimiter: DurableRateLimiter;
   /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
@@ -131,6 +137,14 @@ async function build(): Promise<App> {
   const chatSearch = new ChatSearchService({
     provider: aiProvider,
     model: env.ai?.models.chatSearch ?? 'anthropic/claude-haiku-4-5',
+  });
+  const listingBuilder = new ListingBuilderService({
+    provider: aiProvider,
+    model: env.ai?.models.listingBuilder ?? 'anthropic/claude-opus-5',
+  });
+  const aiModeration = new AiModerationService({
+    provider: aiProvider,
+    model: env.ai?.models.moderation ?? 'anthropic/claude-haiku-4-5',
   });
 
   const mapkit = env.mapkit ? new MapKitTokenIssuer(env.mapkit) : null;
@@ -209,7 +223,7 @@ async function build(): Promise<App> {
   return {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
     gazetteer, search, uploads, messaging, audit, moderation, flags,
-    aiProvider, chatSearch,
+    aiProvider, chatSearch, listingBuilder, aiModeration,
     enquiryLimiter, identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,
