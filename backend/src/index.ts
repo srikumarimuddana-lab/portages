@@ -42,6 +42,7 @@ import {
 } from './http/routes/admin.js';
 import { aiSearch, describeListing } from './http/routes/ai.js';
 import { createReport, listReports, decideReports } from './http/routes/reports.js';
+import { homeRoute, searchRoute, listingRoute, signInRoute } from './web/routes.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -131,6 +132,15 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/api/search/ai', (req) => aiSearch(req, aiDeps));
   route('POST', '/api/listings/:id/describe',
     (req, p) => describeListing(req, p['id']!, aiDeps));
+
+  // ── pages ──────────────────────────────────────────────────────────────
+  // Registered before the API routes so a bare path serves HTML while the
+  // /api prefix keeps serving JSON. Read-only: every write these pages offer
+  // posts to the API, where the guard applies in full.
+  route('GET', '/', (req) => homeRoute(req, app));
+  route('GET', '/search', (req) => searchRoute(req, app));
+  route('GET', '/listings/:id', (req, p) => listingRoute(req, p['id']!, app));
+  route('GET', '/signin', (req) => signInRoute(req, app));
 
   const reportDeps = { cfg: app.cfg, reports: app.reports, hsts: app.hsts };
   route('POST', '/api/reports', (req) => createReport(req, reportDeps));

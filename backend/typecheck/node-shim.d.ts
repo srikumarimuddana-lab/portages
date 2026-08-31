@@ -131,7 +131,11 @@ interface Response {
   text(): Promise<string>;
 }
 declare const Response: {
-  new (body?: string | null, init?: { status?: number; headers?: Headers }): Response;
+  new (body?: string | null, init?: {
+    status?: number;
+    headers?: Record<string, string> | Headers;
+  }): Response;
+  redirect(url: string, status?: number): Response;
 };
 
 declare const TextDecoder: {
@@ -150,6 +154,8 @@ declare const URLSearchParams: {
 interface URL {
   readonly searchParams: URLSearchParams;
   readonly pathname: string;
+  readonly origin: string;
+  readonly href: string;
   toString(): string;
 }
 declare const URL: { new (url: string, base?: string): URL };
