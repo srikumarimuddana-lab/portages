@@ -187,6 +187,28 @@ export function factCheck(text: string, facts: ListingFacts): DraftProblem[] {
   return problems;
 }
 
+/**
+ * A refused draft, in the owner's terms.
+ *
+ * "The draft mentioned a heated garage, which is not on your listing" is
+ * actionable — the owner can tick the amenity, or accept that the copy was
+ * wrong. A bare "the draft was rejected" teaches them nothing and gets them to
+ * press the button again.
+ *
+ * Lives beside the check that produces the problem so the JSON API and the
+ * form-post page say the same thing. Two copies of this wording is two
+ * wordings, eventually.
+ */
+export function explainProblem(kind: DraftProblem['kind'], subject: string): string {
+  const plain = subject.replace(/_/g, ' ');
+  if (kind === 'unbacked_amenity') {
+    return `The draft mentioned ${plain}, which is not listed on this property. `
+      + 'Add the amenity if the property has it, then try again.';
+  }
+  return `The draft made a claim about ${plain} that Portage has no way to verify. `
+    + 'Descriptions can only state facts from the listing itself.';
+}
+
 function factSheet(facts: ListingFacts): string {
   const lines = [
     `listing_type: ${facts.mode === 'rent' ? 'for rent' : 'for sale'}`,

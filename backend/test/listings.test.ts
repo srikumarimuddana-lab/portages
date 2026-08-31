@@ -509,6 +509,23 @@ test('service: a live listing is visible to anyone', async () => {
   assert.equal(view.isOwner, false);
 });
 
+test('service: a listing view reads only photos that actually exist', async () => {
+  // A reserved row whose bytes never arrived is not a photo. Including it
+  // renders a broken <img> to every visitor, and tells an owner their listing
+  // has a photo right up until submitting refuses because it has none — which
+  // is the dead end the edit page was built to remove.
+  //
+  // This asserts the QUERY carries the filter; that the filter is what changes
+  // the answer is proved against a real database in test/sql/uploads.sql,
+  // which runs both forms over the same two rows.
+  const { db, listings } = svc();
+  await listings.get('listing-1', OWNER);
+
+  const media = db.sent.find((s) => /SELECT id, listing_id, storage_key/.test(s.text));
+  assert.ok(media, 'the view should read listing_media');
+  assert.match(media!.text, /status = 'stored'/);
+});
+
 test('service: update refuses a listing the caller does not own', async () => {
   const { listings } = svc();
   await assert.rejects(

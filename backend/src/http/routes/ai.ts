@@ -22,6 +22,7 @@ import { json, errorResponse, type ResponseContext } from '../respond.js';
 import { badRequest, notFound, serviceUnavailable } from '../../lib/errors.js';
 import { ProviderError } from '../../modules/ai/provider.js';
 import type { ChatSearchService } from '../../modules/ai/chat-search.js';
+import { explainProblem } from '../../modules/ai/listing-builder.js';
 import type { ListingBuilderService } from '../../modules/ai/listing-builder.js';
 import type { MeteredProvider } from '../../modules/ai/ledger.js';
 import type { SearchService } from '../../modules/search/service.js';
@@ -225,7 +226,7 @@ export async function describeListing(
           problems: out.problems.map((p) => ({
             kind: p.kind,
             phrase: p.phrase,
-            explanation: explain(p.kind, p.subject),
+            explanation: explainProblem(p.kind, p.subject),
           })),
         },
         ctxOf(ctx.requestId, ctx.origin, deps),
@@ -292,15 +293,6 @@ async function resolvePlace(
   if (!hood) return null;
   const matched = hoods.find((h) => h.name.toLowerCase() === hood.toLowerCase());
   return matched ? { neighbourhoodIds: [matched.id] } : null;
-}
-
-function explain(kind: string, subject: string): string {
-  if (kind === 'unbacked_amenity') {
-    return `The draft mentioned ${subject.replace(/_/g, ' ')}, which is not listed on this property. `
-      + 'Add the amenity if the property has it, then try again.';
-  }
-  return `The draft made a claim about ${subject.replace(/_/g, ' ')} that Portage has no way to verify. `
-    + 'Descriptions can only state facts from the listing itself.';
 }
 
 /** Bad request shape, surfaced so the route file owns its own validation errors. */

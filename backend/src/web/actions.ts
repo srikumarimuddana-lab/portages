@@ -15,7 +15,8 @@ import {
   ABSOLUTE_TTL_MS, CSRF_COOKIE, SESSION_COOKIE, serializeCookie, clearCookie,
 } from '../lib/session.js';
 import { readForm, redirectTo, messageFor, FormError } from './form.js';
-import { AMENITIES, PROPERTY_TYPES } from '../modules/listings/policy.js';
+import { AMENITIES, PROPERTY_TYPES, ROOM_TYPES } from '../modules/listings/policy.js';
+import { explainProblem } from '../modules/ai/listing-builder.js';
 import { REPORT_KINDS } from '../modules/trust/reports.js';
 import type { App } from '../http/app.js';
 import type { ReportKind } from '../modules/trust/reports.js';
@@ -134,7 +135,7 @@ export async function createListingAction(req: Request, app: App): Promise<Respo
 
     const amenities = fields.all('amenities').filter((a) => AMENITIES.includes(a as never));
 
-    await app.listings.create({
+    const created = await app.listings.create({
       ownerId: viewer!.userId,
       mode,
       propertyType: propertyType as never,
@@ -153,11 +154,179 @@ export async function createListingAction(req: Request, app: App): Promise<Respo
       ...(amenities.length > 0 ? { amenities } : {}),
     });
 
-    return redirectTo('/dashboard/listings', {
+    // Straight to the edit page, not the index. A new draft cannot be
+    // submitted without at least one photo, and the edit page is the only
+    // place a photo can be added — sending the owner to a list and asking them
+    // to find their own listing again is a step that exists for no reason.
+    return redirectTo(`/dashboard/listings/${created.id}/edit`, {
       notice: 'Saved as a draft. Add photos, then submit it for review.',
     });
   } catch (err) {
     return fail('/dashboard/listings/new', err);
+  }
+}
+
+/**
+ * POST /dashboard/listings/:id/edit
+ *
+ * Every field the form carries is sent on every save, including the ones the
+ * owner left blank — because a blank number field means "I cleared this", and
+ * a patch that omits it would silently keep the old value. `undefined` and
+ * `null` are different things to `ListingService.update`, and the form is
+ * where that distinction has to be made rather than guessed at.
+ */
+export async function updateListingAction(
+  req: Request, listingId: string, app: App,
+): Promise<Response> {
+  const back = `/dashboard/listings/${listingId}/edit`;
+  try {
+    const { viewer, fields } = await readForm(req, app);
+
+    const dollars = fields.num('priceDollars');
+    if (dollars === undefined || dollars <= 0) throw new FormError('Enter a price.');
+
+    const roomType = fields.get('roomType');
+    if (roomType && !ROOM_TYPES.includes(roomType as never)) {
+      throw new FormError('Choose a room type from the list.');
+    }
+
+    const out = await app.listings.update(listingId, viewer!.userId, {
+      title: fields.get('title'),
+      priceCents: Math.round(dollars * 100),
+      // An empty textarea clears the description; `update` turns '' into null.
+      description: fields.get('description'),
+      roomType: (roomType || null) as never,
+      beds: fields.int('beds') ?? null,
+      baths: fields.num('baths') ?? null,
+      sqft: fields.int('sqft') ?? null,
+      // Unticking every box posts nothing at all, which has to mean "no
+      // amenities" rather than "leave them alone" — otherwise an amenity can
+      // be added but never removed.
+      amenities: fields.all('amenities').filter((a) => AMENITIES.includes(a as never)),
+    });
+
+    return redirectTo(back, {
+      notice: out.rescanned
+        ? 'Saved. Because the wording changed on a live listing, it is back in review.'
+        : 'Saved.',
+    });
+  } catch (err) {
+    return fail(back, err);
+  }
+}
+
+/**
+ * POST /dashboard/listings/:id/attest
+ *
+ * The only thing in the product that satisfies `listings_publish_guard`.
+ */
+export async function attestListingAction(
+  req: Request, listingId: string, app: App,
+): Promise<Response> {
+  const back = `/dashboard/listings/${listingId}/edit`;
+  try {
+    const { viewer } = await readForm(req, app);
+    await app.listings.attestDescription(listingId, viewer!.userId);
+    return redirectTo(back, { notice: 'Confirmed. This listing can now be submitted.' });
+  } catch (err) {
+    return fail(back, err);
+  }
+}
+
+/** POST /dashboard/listings/:id/photos/:photoId/remove */
+export async function removePhotoAction(
+  req: Request, listingId: string, photoId: string, app: App,
+): Promise<Response> {
+  const back = `/dashboard/listings/${listingId}/edit`;
+  try {
+    const { viewer } = await readForm(req, app);
+    await app.listings.removePhoto(listingId, viewer!.userId, photoId);
+    return redirectTo(back, { notice: 'Photo removed.' });
+  } catch (err) {
+    return fail(back, err);
+  }
+}
+
+/**
+ * POST /dashboard/listings/:id/draft — write the description with AI.
+ *
+ * The JSON route hands the draft back to the caller and lets it decide what to
+ * do. A form post has nowhere to put it, so this saves it as the description
+ * with `descriptionSource: 'ai_generated'` — which clears any attestation and
+ * makes the confirm block appear on the page the owner lands on. They read it,
+ * edit it if it is wrong, and confirm it. Nobody else sees it before then.
+ *
+ * A draft that fails the fact check is NOT saved. Showing an owner copy that
+ * claims a garage they do not have, with a warning attached, is how that copy
+ * ends up published — the warning is the part people skip.
+ */
+export async function draftDescriptionAction(
+  req: Request, listingId: string, app: App,
+): Promise<Response> {
+  const back = `/dashboard/listings/${listingId}/edit`;
+  try {
+    const { viewer } = await readForm(req, app);
+
+    if (!(await app.flags.isEnabled('ai.listing_builder', viewer!.userId))) {
+      throw new FormError('Drafting is switched off right now. You can write the description yourself.');
+    }
+    const budget = await app.aiLimiter.check(viewer!.userId);
+    if (!budget.allowed) {
+      throw new FormError(
+        'You have used the AI drafting budget for today. You can still write the description yourself.',
+      );
+    }
+
+    // The same read every other listing route uses, so the visibility rules
+    // are not reimplemented here. `isOwner` is the ownership check, and a 404
+    // keeps a stranger from confirming the listing exists.
+    const listing = await app.listings.get(listingId, {
+      userId: viewer!.userId, role: viewer!.role,
+    });
+    if (!listing.isOwner) throw new FormError('Not found.', 404);
+
+    const out = await app.listingBuilder
+      .withProvider(app.metered.for({
+        actorId: viewer!.userId, subjectType: 'listing', subjectId: listingId,
+      }))
+      .draft({
+        mode: listing.mode,
+        propertyType: listing.propertyType,
+        roomType: listing.roomType,
+        priceCents: listing.priceCents,
+        beds: listing.beds,
+        baths: listing.baths,
+        sqft: listing.sqft,
+        amenities: listing.amenities,
+        city: listing.address.city,
+      });
+
+    if (!out.draft) {
+      if (out.problems.length === 0) {
+        throw new FormError('Drafting did not work this time. You can write the description yourself.');
+      }
+      // Carried on the query string so the page can name each problem. Capped
+      // at two: the flash is a URL, and one actionable example beats a list
+      // nobody reads.
+      const q = new URLSearchParams();
+      for (const p of out.problems.slice(0, 2)) {
+        q.append('problem', `${p.phrase}|${explainProblem(p.kind, p.subject)}`);
+      }
+      return redirectTo(back, {
+        query: q,
+        error: 'The draft was not used — it said things your listing does not support.',
+      });
+    }
+
+    await app.listings.update(listingId, viewer!.userId, {
+      description: out.draft.description,
+      descriptionSource: 'ai_generated',
+    });
+    return redirectTo(back, {
+      notice: 'Draft written. Read it — it cannot be published until you confirm it is accurate.',
+    });
+  } catch (err) {
+    return fail(back, err);
   }
 }
 
@@ -184,7 +353,11 @@ export async function transitionListingAction(
         : `Listing is now ${out.status.replace(/_/g, ' ')}.`,
     });
   } catch (err) {
-    return fail('/dashboard/listings', err);
+    // Back to the EDIT page rather than the index, because that is where the
+    // reason lives. "This listing is not ready to publish" on a list of
+    // listings is a dead end; on the edit page the checklist above the form
+    // already says which part is missing.
+    return fail(`/dashboard/listings/${listingId}/edit`, err);
   }
 }
 

@@ -44,12 +44,14 @@ import { aiSearch, describeListing } from './http/routes/ai.js';
 import { createReport, listReports, decideReports } from './http/routes/reports.js';
 import { homeRoute, searchRoute, listingRoute, signInRoute } from './web/routes.js';
 import {
-  signUpRoute, ownerListingsRoute, newListingRoute, inboxRoute, threadRoute,
+  signUpRoute, ownerListingsRoute, newListingRoute, editListingRoute,
+  inboxRoute, threadRoute,
   queueRoute, listingReviewRoute, messageReviewRoute, flagsRoute, mediaRoute,
 } from './web/routes-app.js';
 import {
   signInAction, signUpAction, signOutAction,
-  createListingAction, transitionListingAction,
+  createListingAction, updateListingAction, transitionListingAction,
+  attestListingAction, removePhotoAction, draftDescriptionAction,
   enquireAction, replyAction, blockThreadAction, reportAction,
   decideListingAction, decideMessageAction, dismissQueueAction, setFlagAction,
 } from './web/actions.js';
@@ -156,6 +158,9 @@ async function buildRoutes(): Promise<void> {
 
   route('GET', '/dashboard/listings', (req) => ownerListingsRoute(req, app));
   route('GET', '/dashboard/listings/new', (req) => newListingRoute(req, app));
+  // `/new` is registered first: matching is first-wins and `new` would
+  // otherwise be read as a listing id by the `:id/edit` pattern below.
+  route('GET', '/dashboard/listings/:id/edit', (req, p) => editListingRoute(req, p['id']!, app));
   route('GET', '/messages', (req) => inboxRoute(req, app));
   route('GET', '/messages/:id', (req, p) => threadRoute(req, p['id']!, app));
 
@@ -175,8 +180,16 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/reports', (req) => reportAction(req, app));
 
   route('POST', '/dashboard/listings', (req) => createListingAction(req, app));
+  route('POST', '/dashboard/listings/:id/edit',
+    (req, p) => updateListingAction(req, p['id']!, app));
   route('POST', '/dashboard/listings/:id/transition',
     (req, p) => transitionListingAction(req, p['id']!, app));
+  route('POST', '/dashboard/listings/:id/attest',
+    (req, p) => attestListingAction(req, p['id']!, app));
+  route('POST', '/dashboard/listings/:id/draft',
+    (req, p) => draftDescriptionAction(req, p['id']!, app));
+  route('POST', '/dashboard/listings/:id/photos/:photoId/remove',
+    (req, p) => removePhotoAction(req, p['id']!, p['photoId']!, app));
 
   route('POST', '/listings/:id/enquire', (req, p) => enquireAction(req, p['id']!, app));
   route('POST', '/messages/:id/reply', (req, p) => replyAction(req, p['id']!, app));

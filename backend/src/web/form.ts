@@ -211,9 +211,21 @@ export async function readForm(
  */
 export function redirectTo(
   path: string,
-  opts: { notice?: string; error?: string; cookies?: string[] } = {},
+  opts: {
+    notice?: string;
+    error?: string;
+    cookies?: string[];
+    /**
+     * Extra query parameters, merged into the same string as the flash.
+     *
+     * Here rather than appended to `path` by the caller because a caller that
+     * writes `` `${path}?x=1` `` and then passes a notice gets two `?` in one
+     * URL, and the second half is silently discarded by the browser.
+     */
+    query?: URLSearchParams;
+  } = {},
 ): Response {
-  const q = new URLSearchParams();
+  const q = new URLSearchParams(opts.query);
   if (opts.notice) q.set('notice', opts.notice);
   if (opts.error) q.set('error', opts.error);
   const qs = q.toString();

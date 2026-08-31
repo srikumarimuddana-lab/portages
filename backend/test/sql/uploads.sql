@@ -153,6 +153,72 @@ BEGIN
 END;
 $$;
 
+-- ── 5b. a reserved photo is invisible to every read, not just the gate ────
+-- The publish gate (2 above) has always filtered on status. The READ paths did
+-- not, which meant a listing rendered a broken <img> for every abandoned
+-- upload, and — worse — DISTINCT ON picked the reserved row at position 0 as
+-- the cover image on every search result for a listing whose real photos sat
+-- behind it.
+--
+-- Both queries are asserted here in the form the services send, together with
+-- their unfiltered twins, so it is visible that the filter is what makes the
+-- difference rather than the fixture.
+
+-- Its own listing, so the rows section 2 left behind cannot be mistaken for
+-- the fixture this section is about.
+INSERT INTO properties (id, address_line, address_norm, city, province)
+VALUES ('bbbbbbbb-2222-4222-8222-222222222222', '1845 Rae St',
+        '1845 rae street', 'Regina', 'SK');
+
+INSERT INTO listings (id, property_id, owner_id, mode, status, price_cents,
+                      property_type, title, description)
+VALUES ('cccccccc-2222-4222-8222-222222222222', 'bbbbbbbb-2222-4222-8222-222222222222',
+        'aaaaaaaa-1111-4111-8111-111111111111', 'rent', 'draft', 189500, 'detached',
+        'Character home near the park',
+        'A three bedroom character home a short walk from the park.');
+
+INSERT INTO listing_media (id, listing_id, storage_key, kind, mime, bytes, position, status)
+VALUES ('eeeeeeee-1111-4111-8111-111111111111', 'cccccccc-2222-4222-8222-222222222222',
+        'listings/c2/p-abandoned', 'photo', 'image/jpeg', 1000, 0, 'pending'),
+       ('eeeeeeee-2222-4222-8222-222222222222', 'cccccccc-2222-4222-8222-222222222222',
+        'listings/c2/p-real', 'photo', 'image/jpeg', 2000, 1, 'stored');
+
+DO $$
+DECLARE n integer; k text;
+BEGIN
+  -- ListingService.#photosFor
+  SELECT count(*) INTO n FROM listing_media
+   WHERE listing_id = ANY(ARRAY['cccccccc-2222-4222-8222-222222222222']::uuid[])
+     AND status = 'stored';
+  PERFORM assert(n = 1, 'a listing view must show only stored photos, got ' || n);
+
+  SELECT count(*) INTO n FROM listing_media
+   WHERE listing_id = ANY(ARRAY['cccccccc-2222-4222-8222-222222222222']::uuid[]);
+  PERFORM assert(n = 2, 'the unfiltered read would show the abandoned row, got ' || n);
+
+  -- SearchService.#coverPhotos
+  SELECT storage_key INTO k FROM (
+    SELECT DISTINCT ON (listing_id) listing_id, storage_key
+      FROM listing_media
+     WHERE listing_id = ANY(ARRAY['cccccccc-2222-4222-8222-222222222222']::uuid[])
+       AND kind = 'photo' AND status = 'stored'
+     ORDER BY listing_id, position, id
+  ) t;
+  PERFORM assert(k = 'listings/c2/p-real',
+    'the cover must be a photo that exists, got ' || coalesce(k, 'null'));
+
+  SELECT storage_key INTO k FROM (
+    SELECT DISTINCT ON (listing_id) listing_id, storage_key
+      FROM listing_media
+     WHERE listing_id = ANY(ARRAY['cccccccc-2222-4222-8222-222222222222']::uuid[])
+       AND kind = 'photo'
+     ORDER BY listing_id, position, id
+  ) t;
+  PERFORM assert(k = 'listings/c2/p-abandoned',
+    'without the filter the cover would be the abandoned upload — that is the bug');
+END;
+$$;
+
 -- ── 6. deleting a user takes their uploads with them ───────────────────────
 -- PIPEDA: an account deletion that leaves upload records behind has not
 -- deleted the account.

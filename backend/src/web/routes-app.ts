@@ -13,28 +13,36 @@ import {
 import {
   queuePage, listingReviewPage, messageReviewPage, flagsPage,
 } from './pages-admin.js';
-import { AMENITIES, PROPERTY_TYPES } from '../modules/listings/policy.js';
+import { editListingPage } from './pages-edit.js';
+import { AMENITIES, PROPERTY_TYPES, ROOM_TYPES } from '../modules/listings/policy.js';
 import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
+import { contentSecurityPolicy, uploadOriginOf } from './headers.js';
 import { flashOf } from './form.js';
 import type { Viewer } from './layout.js';
 import type { App } from '../http/app.js';
 import type { QueueState } from '../modules/admin/moderation.js';
 
-const HTML_HEADERS = {
-  'content-type': 'text/html; charset=utf-8',
-  'content-security-policy':
-    "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; "
-    + "script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; "
-    + "form-action 'self'",
-  'x-content-type-options': 'nosniff',
-  'referrer-policy': 'strict-origin-when-cross-origin',
-  // Signed-in pages must never sit in a shared cache. An inbox served from a
-  // CDN to the next visitor is the worst bug this file could have.
-  'cache-control': 'private, no-store',
-};
+/**
+ * Computed per app rather than as a module constant, because the CSP has to
+ * name the object-storage origin an owner's browser PUTs photo bytes to, and
+ * that origin is deployment configuration.
+ */
+function htmlHeaders(app: App): Record<string, string> {
+  return {
+    'content-type': 'text/html; charset=utf-8',
+    'content-security-policy': contentSecurityPolicy({
+      uploadOrigin: uploadOriginOf(app.env.storage?.endpoint),
+    }),
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'strict-origin-when-cross-origin',
+    // Signed-in pages must never sit in a shared cache. An inbox served from a
+    // CDN to the next visitor is the worst bug this file could have.
+    'cache-control': 'private, no-store',
+  };
+}
 
-function respond(body: string, status = 200): Response {
-  return new Response(body, { status, headers: HTML_HEADERS });
+function respond(app: App, body: string, status = 200): Response {
+  return new Response(body, { status, headers: htmlHeaders(app) });
 }
 
 async function viewerOf(app: App, req: Request): Promise<Viewer | null> {
@@ -67,8 +75,9 @@ function toSignIn(req: Request): Response {
  * /admin/queue must learn nothing from the answer — including that they
  * guessed a real URL.
  */
-function notFound(viewer: Viewer | null): Response {
+function notFound(app: App, viewer: Viewer | null): Response {
   return respond(
+    app,
     page({ title: 'Not found', viewer }, html`
       <div class="wrap"><div class="empty">
         <h1>Not found</h1>
@@ -83,7 +92,7 @@ function notFound(viewer: Viewer | null): Response {
 export async function signUpRoute(req: Request, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
   if (viewer) return Response.redirect(new URL('/', req.url).toString(), 302);
-  return respond(signUpPage(flashOf(new URL(req.url))));
+  return respond(app, signUpPage(flashOf(new URL(req.url))));
 }
 
 // ── owner ───────────────────────────────────────────────────────────────────
@@ -92,7 +101,7 @@ export async function ownerListingsRoute(req: Request, app: App): Promise<Respon
   const viewer = await viewerOf(app, req);
   if (!viewer) return toSignIn(req);
   const listings = await app.listings.listForOwner(viewer.userId, { limit: 50 });
-  return respond(ownerListingsPage({ viewer, listings, ...flashOf(new URL(req.url)) }));
+  return respond(app, ownerListingsPage({ viewer, listings, ...flashOf(new URL(req.url)) }));
 }
 
 export async function newListingRoute(req: Request, app: App): Promise<Response> {
@@ -101,10 +110,63 @@ export async function newListingRoute(req: Request, app: App): Promise<Response>
   // The form only mentions AI drafting when the switch is actually on, so a
   // switched-off feature is absent rather than advertised and then refused.
   const aiEnabled = await app.flags.isEnabled('ai.listing_builder', viewer.userId);
-  return respond(newListingPage({
+  return respond(app, newListingPage({
     viewer, propertyTypes: PROPERTY_TYPES, amenities: AMENITIES, aiEnabled,
     ...flashOf(new URL(req.url)),
   }));
+}
+
+/**
+ * GET /dashboard/listings/:id/edit
+ *
+ * `listings.get` applies the visibility rules and `isOwner` is the ownership
+ * check — a staff member can READ any listing through that call, but editing
+ * it is the owner's alone, so a non-owner gets the same 404 a stranger does.
+ */
+export async function editListingRoute(req: Request, id: string, app: App): Promise<Response> {
+  const viewer = await viewerOf(app, req);
+  if (!viewer) return toSignIn(req);
+
+  try {
+    const listing = await app.listings.get(id, { userId: viewer.userId, role: viewer.role });
+    if (!listing.isOwner) return notFound(app, viewer);
+
+    const aiEnabled = await app.flags.isEnabled('ai.listing_builder', viewer.userId);
+    const url = new URL(req.url);
+    return respond(app, editListingPage({
+      viewer,
+      listing,
+      amenities: AMENITIES,
+      roomTypes: listing.mode === 'rent' ? ROOM_TYPES : [],
+      aiEnabled,
+      // The uploader is hidden rather than shown-and-broken when there is
+      // nowhere to put the bytes.
+      uploadsConfigured: app.uploads !== null,
+      ...flashOf(url),
+      ...draftProblemsOf(url),
+    }));
+  } catch {
+    return notFound(app, viewer);
+  }
+}
+
+/**
+ * Fact-check failures handed over from the draft action, as `phrase|reason`.
+ *
+ * Bounded on every axis — count, length, and the split — because this is a
+ * query string, which is to say it is whatever anyone chooses to type.
+ */
+function draftProblemsOf(url: URL): { draftProblems?: Array<{ phrase: string; explanation: string }> } {
+  const raw = url.searchParams.getAll('problem').slice(0, 3);
+  const problems = raw.flatMap((entry) => {
+    const at = entry.indexOf('|');
+    if (at <= 0) return [];
+    return [{
+      phrase: entry.slice(0, at).slice(0, 120),
+      explanation: entry.slice(at + 1).slice(0, 300),
+    }];
+  });
+  return problems.length > 0 ? { draftProblems: problems } : {};
 }
 
 // ── messaging ───────────────────────────────────────────────────────────────
@@ -113,7 +175,7 @@ export async function inboxRoute(req: Request, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
   if (!viewer) return toSignIn(req);
   const threads = await app.messaging.listThreads(viewer.userId, { limit: 50 });
-  return respond(inboxPage({ viewer, threads, ...flashOf(new URL(req.url)) }));
+  return respond(app, inboxPage({ viewer, threads, ...flashOf(new URL(req.url)) }));
 }
 
 export async function threadRoute(req: Request, id: string, app: App): Promise<Response> {
@@ -123,9 +185,9 @@ export async function threadRoute(req: Request, id: string, app: App): Promise<R
     // getThread already refuses a thread the caller is not party to, with a
     // 404 — so this page inherits that check rather than repeating it.
     const thread = await app.messaging.getThread(id, viewer.userId);
-    return respond(threadPage({ viewer, thread, ...flashOf(new URL(req.url)) }));
+    return respond(app, threadPage({ viewer, thread, ...flashOf(new URL(req.url)) }));
   } catch {
-    return notFound(viewer);
+    return notFound(app, viewer);
   }
 }
 
@@ -135,7 +197,7 @@ const STAFF_ROLES = ['staff', 'admin'];
 
 export async function queueRoute(req: Request, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
-  if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(viewer);
+  if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(app, viewer);
 
   const asked = new URL(req.url).searchParams.get('state');
   const state: QueueState =
@@ -145,17 +207,17 @@ export async function queueRoute(req: Request, app: App): Promise<Response> {
     app.moderation.list({ state, limit: 50 }),
     app.moderation.stats(),
   ]);
-  return respond(queuePage({ viewer, items, stats, state, ...flashOf(new URL(req.url)) }));
+  return respond(app, queuePage({ viewer, items, stats, state, ...flashOf(new URL(req.url)) }));
 }
 
 export async function listingReviewRoute(req: Request, id: string, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
-  if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(viewer);
+  if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(app, viewer);
 
   try {
     const l = await app.listings.get(id, { userId: viewer.userId, role: viewer.role });
     const reports = await app.reports.forSubject('listing', id);
-    return respond(listingReviewPage({
+    return respond(app, listingReviewPage({
       viewer,
       ...flashOf(new URL(req.url)),
       listing: {
@@ -177,31 +239,31 @@ export async function listingReviewRoute(req: Request, id: string, app: App): Pr
       })),
     }));
   } catch {
-    return notFound(viewer);
+    return notFound(app, viewer);
   }
 }
 
 export async function messageReviewRoute(req: Request, id: string, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
-  if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(viewer);
+  if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(app, viewer);
 
   try {
     const m = await app.messaging.reviewMessage(id, {
       userId: viewer.userId,
       role: viewer.role as 'staff' | 'admin',
     });
-    return respond(messageReviewPage({ viewer, message: m, ...flashOf(new URL(req.url)) }));
+    return respond(app, messageReviewPage({ viewer, message: m, ...flashOf(new URL(req.url)) }));
   } catch {
-    return notFound(viewer);
+    return notFound(app, viewer);
   }
 }
 
 export async function flagsRoute(req: Request, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
-  if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(viewer);
+  if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(app, viewer);
 
   const [flags, cache] = await Promise.all([app.flags.list(), app.flags.cacheState()]);
-  return respond(flagsPage({ viewer, flags, cache, ...flashOf(new URL(req.url)) }));
+  return respond(app, flagsPage({ viewer, flags, cache, ...flashOf(new URL(req.url)) }));
 }
 
 // ── media ───────────────────────────────────────────────────────────────────

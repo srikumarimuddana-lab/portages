@@ -23,7 +23,8 @@ import {
 import {
   queuePage, listingReviewPage, messageReviewPage, flagsPage,
 } from '../src/web/pages-admin.js';
-import { AMENITIES, PROPERTY_TYPES } from '../src/modules/listings/policy.js';
+import { editListingPage } from '../src/web/pages-edit.js';
+import { AMENITIES, PROPERTY_TYPES, ROOM_TYPES } from '../src/modules/listings/policy.js';
 import { FLAG_KEYS, FLAGS, defaultStateOf } from '../src/modules/flags/registry.js';
 import type { SearchResultCard } from '../src/modules/search/service.js';
 import type { ListingView } from '../src/modules/listings/service.js';
@@ -177,6 +178,58 @@ const PAGES: Array<[string, string]> = [
     viewer: OWNER, propertyTypes: PROPERTY_TYPES, amenities: AMENITIES, aiEnabled: true,
   })],
 
+  // The draft an owner actually lands on: no photos, an unattested AI
+  // description, and both blockers still open. This is the state the flow used
+  // to dead-end in, so it is the one worth looking at.
+  ['listing-edit-draft', editListingPage({
+    viewer: OWNER,
+    listing: {
+      ...LISTING, id: 'draft-1', status: 'draft', isOwner: true,
+      descriptionSource: 'ai_generated', descriptionAttested: false,
+      photos: [], actions: ['submit'],
+    },
+    amenities: AMENITIES, roomTypes: ROOM_TYPES,
+    aiEnabled: true, uploadsConfigured: true,
+  })],
+  ['listing-edit', editListingPage({
+    viewer: OWNER,
+    listing: {
+      ...LISTING, id: 'live-1', isOwner: true, actions: ['pause', 'close'],
+      photos: [
+        photo('a', 0), photo('b', 1), photo('c', 2), photo('d', 3),
+      ],
+    },
+    amenities: AMENITIES, roomTypes: ROOM_TYPES,
+    aiEnabled: false, uploadsConfigured: true,
+    notice: 'Saved.',
+  })],
+  // A refused draft. The copy is NOT shown — only what was wrong with it.
+  ['listing-edit-refused', editListingPage({
+    viewer: OWNER,
+    listing: {
+      ...LISTING, id: 'draft-2', status: 'draft', isOwner: true,
+      description: null, descriptionSource: 'human', photos: [], actions: ['submit'],
+    },
+    amenities: AMENITIES, roomTypes: ROOM_TYPES,
+    aiEnabled: true, uploadsConfigured: true,
+    error: 'The draft was not used — it said things your listing does not support.',
+    draftProblems: [
+      { phrase: 'EV charger',
+        explanation: 'The draft mentioned ev charger, which is not listed on this '
+          + 'property. Add the amenity if the property has it, then try again.' },
+      { phrase: 'sunny south-facing windows',
+        explanation: 'The draft made a claim about orientation that Portage has no way '
+          + 'to verify. Descriptions can only state facts from the listing itself.' },
+    ],
+  })],
+  // Every field hostile, on the page that has the most inputs.
+  ['listing-edit-hostile', editListingPage({
+    viewer: OWNER,
+    listing: { ...HOSTILE, isOwner: true, photos: [photo('x', 0)], actions: ['submit'] },
+    amenities: AMENITIES, roomTypes: ROOM_TYPES,
+    aiEnabled: true, uploadsConfigured: true,
+  })],
+
   ['inbox', inboxPage({
     viewer: OWNER,
     threads: [
@@ -273,6 +326,13 @@ const PAGES: Array<[string, string]> = [
     })),
   })],
 ];
+
+function photo(id: string, position: number) {
+  return {
+    id, storageKey: `listings/x/${id}`, kind: 'photo',
+    mime: 'image/jpeg', bytes: 240_000, position,
+  };
+}
 
 function thread(id: string, listingTitle: string, unreadCount: number,
                 role: 'owner' | 'inquirer', lastPreview: string | null) {

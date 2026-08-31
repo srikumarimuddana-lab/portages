@@ -299,3 +299,39 @@ test('query string: repeated and comma-joined list values both work', () => {
   const joined = specFromQuery(new URLSearchParams('amenities=parking,yard'));
   assert.deepEqual(repeated['amenities'], joined['amenities']);
 });
+
+// ── the cover photo ─────────────────────────────────────────────────────────
+
+test('the cover photo is chosen only from photos that exist', async () => {
+  // DISTINCT ON takes ONE row per listing. Without a status filter, an
+  // abandoned upload sitting at position 0 becomes the cover image on every
+  // search result for a listing whose real photos are right behind it — a
+  // broken image on the page that carries the whole product.
+  //
+  // That the filter changes the answer is proved against real PostgreSQL in
+  // test/sql/uploads.sql; this proves the service sends the filtered form.
+  const { SearchService } = await import('../src/modules/search/service.js');
+
+  const sent: string[] = [];
+  const db = {
+    async query(text: string) {
+      sent.push(text);
+      return text.includes('DISTINCT ON')
+        ? { rows: [], rowCount: 0 }
+        : { rows: [{ id: 'l-1', mode: 'rent', status: 'live', price_cents: '150000',
+                     property_type: 'apartment', room_type: null, beds: 2, baths: null,
+                     sqft: null, amenities: [], title: 't', description: null,
+                     published_at: new Date(), created_at: new Date(),
+                     address_line: 'x', unit: null, city: 'Regina', province: 'SK',
+                     postal_code: null, lat: null, lng: null, neighbourhood_id: null }],
+            rowCount: 1 };
+    },
+    async transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> { return fn(db); },
+  } as never;
+
+  await new SearchService(db).search({ sort: 'newest', limit: 5 });
+
+  const cover = sent.find((t) => t.includes('DISTINCT ON'));
+  assert.ok(cover, 'the cards should fetch their cover photos');
+  assert.match(cover!, /status = 'stored'/);
+});

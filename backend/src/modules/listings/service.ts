@@ -860,9 +860,13 @@ export class ListingService {
       id: string; listing_id: string; storage_key: string; kind: string;
       mime: string; bytes: string; position: number;
     }>(
+      // Stored only, the same rule #assertReadyToPublish applies. A reserved
+      // row whose bytes never arrived is not a photo: rendering it gives every
+      // visitor a broken image, and counting it tells an owner their listing
+      // has a photo right up until submitting refuses because it has none.
       `SELECT id, listing_id, storage_key, kind, mime, bytes, position
          FROM listing_media
-        WHERE listing_id = ANY($1::uuid[])
+        WHERE listing_id = ANY($1::uuid[]) AND status = 'stored'
         ORDER BY listing_id, position`,
       [listingIds as string[]],
     );

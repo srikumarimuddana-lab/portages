@@ -19,6 +19,7 @@
  */
 import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
 import { homePage, searchPage, listingPage, signInPage } from './pages.js';
+import { contentSecurityPolicy } from './headers.js';
 import { flashOf } from './form.js';
 import type { Viewer } from './layout.js';
 import type { App } from '../http/app.js';
@@ -32,12 +33,11 @@ function respond(body: string, status = 200, extra: Record<string, string> = {})
       // The API sets its own CSP for JSON. This one is for a document, and it
       // is what turns the escaping in html.ts from the only defence into the
       // first of two: even a missed interpolation cannot load a remote script.
-      // 'unsafe-inline' is present for styles and the twelve-line tab script;
-      // tightening it to a nonce is the next step, not a different design.
-      'content-security-policy':
-        "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; "
-        + "script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; "
-        + "form-action 'self'",
+      //
+      // No `uploadOrigin` here on purpose. Nothing on a public page uploads
+      // anything, so `connect-src` stays at 'self' and these pages cannot talk
+      // to the bucket at all.
+      'content-security-policy': contentSecurityPolicy(),
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'strict-origin-when-cross-origin',
       ...extra,

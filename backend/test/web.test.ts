@@ -21,8 +21,42 @@ import {
   CSRF_COOKIE, SESSION_COOKIE, createSessionMaterial, requiresCsrf,
 } from '../src/lib/session.js';
 import { homePage, searchPage, listingPage, signInPage } from '../src/web/pages.js';
+import { editListingPage } from '../src/web/pages-edit.js';
+import { contentSecurityPolicy, uploadOriginOf } from '../src/web/headers.js';
+import { AMENITIES, ROOM_TYPES, MAX_PHOTOS } from '../src/modules/listings/policy.js';
 import type { SearchResultCard } from '../src/modules/search/service.js';
 import type { ListingView } from '../src/modules/listings/service.js';
+
+/**
+ * Every page-template file, discovered rather than listed.
+ *
+ * The scanners below — CSRF fields, nested forms, undefined CSS classes, forms
+ * pointed at the JSON API — are only worth anything if they see every file. A
+ * hardcoded list silently exempts the next page someone adds, which is exactly
+ * when a new form with no CSRF field would appear.
+ */
+async function pageFiles(): Promise<string[]> {
+  const { readdir } = await import('node:fs/promises');
+  const names = await readdir(WEB_DIR);
+  const found = names.filter((n) => /^(pages.*|layout)\.ts$/.test(n)).sort();
+  // Without this, a typo in the pattern turns every scanner below into a loop
+  // over nothing that passes triumphantly.
+  assert.ok(found.length >= 4, `expected several page files, found ${found.join(', ')}`);
+  assert.ok(found.includes('layout.ts'), 'layout.ts should be scanned too');
+  return found;
+}
+
+const WEB_DIR = new URL('../src/web/', import.meta.url).pathname;
+
+async function readWeb(file: string): Promise<string> {
+  const { readFile } = await import('node:fs/promises');
+  return readFile(`${WEB_DIR}${file}`, 'utf8');
+}
+
+/** Source with comments removed, so prose about markup is not read as markup. */
+function code(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
 
 // ── the escaping primitive ──────────────────────────────────────────────────
 
@@ -85,13 +119,19 @@ test('the codebase has few raw() callers, and each is markup we built', async ()
   // The security argument depends on this staying enumerable. If this count
   // climbs, the claim "XSS is structurally impossible" needs re-examining
   // rather than restating.
-  const { readFile } = await import('node:fs/promises');
+  // Discovered, not listed: a hardcoded list would have missed pages-edit.ts,
+  // which is the file that adds the most raw() calls in the codebase.
+  const perFile: string[] = [];
   let total = 0;
-  for (const f of ['layout.ts', 'pages.ts', 'html.ts']) {
-    const src = await readFile(new URL(`../src/web/${f}`, import.meta.url).pathname, 'utf8');
-    total += (src.match(/\braw\(/g) ?? []).length;
+  for (const f of ['html.ts', ...(await pageFiles())]) {
+    const n = ((await readWeb(f)).match(/\braw\(/g) ?? []).length;
+    total += n;
+    if (n > 0) perFile.push(`${f}=${n}`);
   }
-  assert.ok(total <= 12, `raw() has ${total} call sites; each one is a place XSS could come from`);
+  assert.ok(
+    total <= 16,
+    `raw() has ${total} call sites (${perFile.join(', ')}); each is a place XSS could come from`,
+  );
 });
 
 // ── URLs ────────────────────────────────────────────────────────────────────
@@ -208,6 +248,14 @@ const LISTING: ListingView = {
 };
 
 const XSS = '<script>alert(1)</script>';
+
+/** The same listing with every text field turned into an attack. */
+const HOSTILE_LISTING: ListingView = {
+  ...LISTING,
+  title: XSS,
+  description: '</script><img src=x onerror=alert(2)>\nand onmouseover=\'alert(4)\'',
+  address: { ...LISTING.address, addressLine: '<h1>injected</h1> 99 Fake St' },
+};
 
 /** Every `<script>` in the output that we did not put there ourselves. */
 function foreignScripts(markup: string): string[] {
@@ -342,17 +390,13 @@ test('every badge class a page uses is defined in the CSS', async () => {
   // none. Every one of them rendered as plain bold text — including "Off" on
   // the kill-switch page, which is the single state you most need to spot
   // during an incident. Nothing failed; it just quietly looked wrong.
-  const { readFile } = await import('node:fs/promises');
-  const dir = new URL('../src/web/', import.meta.url).pathname;
-
-  const layout = await readFile(`${dir}layout.ts`, 'utf8');
   const defined = new Set(
-    [...layout.matchAll(/\.(badge-[a-z0-9-]+)\s*\{/g)].map((m) => m[1]!),
+    [...(await readWeb('layout.ts')).matchAll(/\.(badge-[a-z0-9-]+)\s*\{/g)].map((m) => m[1]!),
   );
 
   const used = new Set<string>();
-  for (const f of ['pages.ts', 'pages-app.ts', 'pages-admin.ts', 'layout.ts']) {
-    const src = await readFile(`${dir}${f}`, 'utf8');
+  for (const f of await pageFiles()) {
+    const src = await readWeb(f);
     for (const m of src.matchAll(/['"`\s](badge-[a-z0-9-]+)['"`\s]/g)) used.add(m[1]!);
   }
 
@@ -364,9 +408,8 @@ test('every badge class a page uses is defined in the CSS', async () => {
 test('every chip and notice modifier a page uses is defined too', async () => {
   // Same failure mode as the badges, checked for the other two families that
   // carry meaning rather than decoration.
-  const { readFile } = await import('node:fs/promises');
-  const dir = new URL('../src/web/', import.meta.url).pathname;
-  const layout = await readFile(`${dir}layout.ts`, 'utf8');
+  const layout = await readWeb('layout.ts');
+  const files = await pageFiles();
 
   for (const family of ['chip', 'notice']) {
     const defined = new Set(
@@ -374,8 +417,8 @@ test('every chip and notice modifier a page uses is defined too', async () => {
         .map((m) => m[1]!),
     );
     const used = new Set<string>();
-    for (const f of ['pages.ts', 'pages-app.ts', 'pages-admin.ts']) {
-      const src = await readFile(`${dir}${f}`, 'utf8');
+    for (const f of files) {
+      const src = await readWeb(f);
       for (const m of src.matchAll(new RegExp(`[\\s"'\`](${family}-[a-z0-9-]+)[\\s"'\`]`, 'g'))) {
         used.add(m[1]!);
       }
@@ -390,17 +433,12 @@ test('no page nests a form inside another form', async () => {
   // its buttons silently submit the OUTER one. On the thread page that meant
   // "Block this conversation" would have sent a reply instead — the opposite
   // of what someone clicking it wants, with no error anywhere.
-  const { readFile } = await import('node:fs/promises');
-  const dir = new URL('../src/web/', import.meta.url).pathname;
-
-  for (const f of ['pages.ts', 'pages-app.ts', 'pages-admin.ts']) {
+  for (const f of await pageFiles()) {
     // Comments are stripped first. The comment explaining THIS bug mentions
     // a form inside a form in prose, and a scanner that counted it would
     // report the file it was added to — which is a fine way to spend twenty
     // minutes concluding the test is broken.
-    const src = (await readFile(`${dir}${f}`, 'utf8'))
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
+    const src = code(await readWeb(f));
 
     // Walk the template text tracking form depth. Crude, and sufficient:
     // these files contain no computed tag names, so a textual scan sees
@@ -428,13 +466,8 @@ test('no page nests a form inside another form', async () => {
 test('every signed-in form carries a CSRF field', async () => {
   // A form without one looks fine, submits, and is refused — with the cause
   // three layers away from the page that caused it.
-  const { readFile } = await import('node:fs/promises');
-  const dir = new URL('../src/web/', import.meta.url).pathname;
-
-  for (const f of ['pages.ts', 'pages-app.ts', 'pages-admin.ts', 'layout.ts']) {
-    const src = (await readFile(`${dir}${f}`, 'utf8'))
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
+  for (const f of await pageFiles()) {
+    const src = code(await readWeb(f));
 
     // Each <form> up to its closing tag must contain either csrfField(...) or
     // be one of the two anonymous posts, which have no session to protect.
@@ -463,10 +496,8 @@ test('every signed-in form carries a CSRF field', async () => {
 test('no form posts to the JSON API, which cannot accept it', async () => {
   // The API requires application/json and a CSRF header; a <form> can send
   // neither. A form pointed at /api/... renders perfectly and does nothing.
-  const { readFile } = await import('node:fs/promises');
-  const dir = new URL('../src/web/', import.meta.url).pathname;
-  for (const f of ['pages.ts', 'pages-app.ts', 'pages-admin.ts', 'layout.ts']) {
-    const src = await readFile(`${dir}${f}`, 'utf8');
+  for (const f of await pageFiles()) {
+    const src = await readWeb(f);
     assert.ok(!/action="\/api\//.test(src), `${f}: a form posts to the JSON API`);
   }
 });
@@ -493,10 +524,9 @@ test('every page function forwards the flash to the shell', async () => {
   // A redirect whose message nothing displays is a form that appears to do
   // nothing, and the page that forgets is always the one whose failure
   // mattered. Checked structurally rather than page by page.
-  const { readFile } = await import('node:fs/promises');
-  const dir = new URL('../src/web/', import.meta.url).pathname;
-  for (const f of ['pages.ts', 'pages-app.ts', 'pages-admin.ts']) {
-    const src = await readFile(`${dir}${f}`, 'utf8');
+  for (const f of await pageFiles()) {
+    if (f === 'layout.ts') continue;
+    const src = await readWeb(f);
     const exported = [...src.matchAll(/export function (\w+Page)\(/g)].map((m) => m[1]!);
     const forwards = (src.match(/notice: (opts|o)\.notice/g) ?? []).length;
     assert.equal(
@@ -761,4 +791,244 @@ test('readForm caps the body it will read', async () => {
     ),
     413, 'oversized body',
   );
+});
+
+// ── the edit page and its uploader ──────────────────────────────────────────
+//
+// Photos are the one place the site needs JavaScript, so they are the one
+// place a template test is not enough: the script is a string, it is not
+// typechecked, and a wrong endpoint or a wrong body key fails silently in a
+// browser nobody is watching. These assert the contract between that string
+// and the JSON routes it calls.
+
+const EDIT_LISTING: ListingView = {
+  ...HOSTILE_LISTING,
+  id: 'l-edit',
+  title: 'Bright two bedroom in Cathedral',
+  description: 'Two bedrooms in Cathedral, heat included.',
+  isOwner: true,
+  photos: [],
+  actions: ['submit'],
+};
+
+function edit(over: Partial<Parameters<typeof editListingPage>[0]> = {}): string {
+  return editListingPage({
+    viewer: { userId: 'o', role: 'user', csrfToken: 'tok' },
+    listing: EDIT_LISTING,
+    amenities: AMENITIES,
+    roomTypes: ROOM_TYPES,
+    aiEnabled: false,
+    uploadsConfigured: true,
+    ...over,
+  });
+}
+
+test('the edit page names both blockers before an owner presses submit', () => {
+  // The dead end this page exists to remove: submit refuses, and the refusal
+  // does not say which of the two requirements is missing.
+  const out = edit({
+    listing: {
+      ...EDIT_LISTING,
+      photos: [],
+      descriptionSource: 'ai_generated',
+      descriptionAttested: false,
+    },
+  });
+  assert.match(out, /Add at least one photo/);
+  assert.match(out, /confirm it is accurate/);
+});
+
+test('the checklist disappears once both blockers are cleared', () => {
+  const out = edit({
+    listing: {
+      ...EDIT_LISTING,
+      photos: [{ id: 'p1', storageKey: 'listings/x/p1', kind: 'photo',
+                 mime: 'image/jpeg', bytes: 1000, position: 0 }],
+      descriptionSource: 'human',
+    },
+  });
+  assert.ok(!out.includes('Before this can be submitted'), out.slice(0, 400));
+});
+
+test('only an AI description asks to be confirmed', () => {
+  // The attestation block is what satisfies listings_publish_guard. Showing it
+  // for copy the owner typed themselves would train them to click through it.
+  const human = edit({ listing: { ...EDIT_LISTING, descriptionSource: 'human' } });
+  assert.ok(!human.includes('Confirm the description'));
+
+  const ai = edit({
+    listing: { ...EDIT_LISTING, descriptionSource: 'ai_generated', descriptionAttested: false },
+  });
+  assert.match(ai, /Confirm the description/);
+  assert.match(ai, /action="\/dashboard\/listings\/l-edit\/attest"/);
+
+  const attested = edit({
+    listing: { ...EDIT_LISTING, descriptionSource: 'ai_generated', descriptionAttested: true },
+  });
+  assert.ok(!attested.includes('Confirm the description'));
+});
+
+test('the uploader is replaced by an explanation when storage is not configured', () => {
+  // Rendering a file input with nowhere to send the bytes is worse than not
+  // rendering one: it fails after the owner has chosen twenty photos.
+  const off = edit({ uploadsConfigured: false });
+  assert.ok(!off.includes('id="photo-input"'));
+  assert.match(off, /Photo storage is not configured/);
+
+  const on = edit({ uploadsConfigured: true });
+  assert.match(on, /id="photo-input"/);
+});
+
+test('the uploader hides itself at the photo cap rather than failing at it', () => {
+  const full = edit({
+    listing: {
+      ...EDIT_LISTING,
+      photos: Array.from({ length: MAX_PHOTOS }, (_, i) => ({
+        id: `p${i}`, storageKey: `listings/x/p${i}`, kind: 'photo',
+        mime: 'image/jpeg', bytes: 1000, position: i,
+      })),
+    },
+  });
+  assert.ok(!full.includes('id="photo-input"'));
+  assert.match(full, new RegExp(`maximum of ${MAX_PHOTOS} photos`));
+});
+
+test('the uploader posts to endpoints that exist, with the body keys they parse', () => {
+  // A mutation test on this file is what this replaces: changing the endpoint
+  // or a body key in the script breaks nothing that runs in CI, and the only
+  // symptom is an upload that does not happen.
+  const out = edit();
+
+  // Step 1 — the ticket. Registered in index.ts as POST /api/listings/:id/photos.
+  assert.match(out, /fetch\('\/api\/listings\/' \+ encodeURIComponent\(listingId\) \+ '\/photos'/);
+  assert.match(out, /JSON\.stringify\(\{ mime: mime, bytes: blob\.size \}\)/);
+
+  // Step 3 — completion. The route validates `completionToken`; the ticket
+  // calls the same value `uploadToken`, and getting that mapping backwards is
+  // a 400 the owner sees as "the upload could not be confirmed".
+  assert.match(out, /fetch\('\/api\/uploads\/complete'/);
+  assert.match(out, /completionToken: ticket\.uploadToken/);
+
+  // Both calls need the CSRF header, which is what makes them different from
+  // every other write on this page.
+  assert.equal((out.match(/'x-portage-csrf': csrf\(\)/g) ?? []).length, 2);
+});
+
+test('the uploader reads the CSRF cookie by its real name', async () => {
+  // A stale cookie name here is a 403 on every upload, and the page would look
+  // completely fine.
+  const out = edit();
+  assert.ok(out.includes(CSRF_COOKIE), `the script should read ${CSRF_COOKIE}`);
+});
+
+test('the upload script interpolates nothing, which is what makes raw() safe', async () => {
+  const src = await readWeb('pages-edit.ts');
+  const script = /const UPLOAD_SCRIPT = `([\s\S]*?)`;/.exec(src)?.[1];
+  assert.ok(script, 'UPLOAD_SCRIPT should be a template literal');
+  // `${` inside a raw()'d string is an injection point by construction: the
+  // value would land in a <script> block with no escaping between it and the
+  // parser.
+  assert.ok(!script!.includes('${'), 'UPLOAD_SCRIPT must not interpolate anything');
+});
+
+test('a hostile listing is still text on the edit page, in inputs and all', () => {
+  // The page with the most inputs, and the only one that echoes owner text
+  // back into `value=` attributes and into a <textarea>.
+  const out = edit({ listing: { ...HOSTILE_LISTING, isOwner: true, photos: [] } });
+
+  // What matters is that no TAG got through. The characters `onerror=alert(2)`
+  // survive as text and are meant to: with the surrounding < and > escaped
+  // they are letters in a textarea, not an attribute. Asserting on the
+  // substring instead would fail on correct output, which is how a test ends
+  // up being weakened until it checks nothing.
+  assert.equal(foreignScripts(out).length, 0);
+  assert.ok(!out.includes('<img'), 'no photos, so no img tag may exist');
+  assert.ok(!out.includes('<iframe'));
+  assert.ok(!out.includes('<h1>injected'));
+
+  // And the same text IS present, escaped — otherwise this would pass by
+  // rendering nothing at all.
+  assert.ok(out.includes('&lt;/script&gt;&lt;img src=x onerror=alert(2)&gt;'), out.slice(0, 200));
+  assert.match(out, /value="&lt;script&gt;alert\(1\)&lt;\/script&gt;"/);
+});
+
+test('a refused draft shows the reasons and never the copy', () => {
+  // The draft is withheld on purpose. Copy that claims a garage the property
+  // does not have, shown with a warning attached, is copy that gets published:
+  // the warning is the part people skip.
+  const out = edit({
+    draftProblems: [{ phrase: 'heated garage', explanation: 'Not listed on this property.' }],
+    error: 'The draft was not used — it said things your listing does not support.',
+  });
+  assert.match(out, /heated garage/);
+  assert.match(out, /Not listed on this property/);
+  assert.match(out, /false advertising claim/);
+});
+
+// ── the CSP that lets the upload happen ─────────────────────────────────────
+
+test('connect-src names the bucket, or the upload is blocked before it is sent', () => {
+  // The bug this encodes: with no connect-src at all the policy falls back to
+  // default-src 'self', the presigned PUT is refused by the browser, and the
+  // only evidence is a console message on a stranger's phone.
+  const withBucket = contentSecurityPolicy({ uploadOrigin: 'https://acct.r2.cloudflarestorage.com' });
+  assert.match(withBucket, /connect-src 'self' https:\/\/acct\.r2\.cloudflarestorage\.com/);
+
+  const without = contentSecurityPolicy();
+  assert.match(without, /connect-src 'self'(;|$)/);
+  assert.ok(!without.includes('cloudflarestorage'));
+});
+
+test('the policy still forbids the things it forbade before', () => {
+  const csp = contentSecurityPolicy({ uploadOrigin: 'https://bucket.example' });
+  for (const clause of [
+    "default-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'",
+  ]) {
+    assert.ok(csp.includes(clause), `${clause} missing from: ${csp}`);
+  }
+});
+
+test('uploadOriginOf keeps the origin and drops everything else', () => {
+  // Only the origin goes in the header. A presigned URL carries a signature,
+  // and a signature does not belong in a header that is logged and cached.
+  assert.equal(uploadOriginOf('acct.r2.cloudflarestorage.com'), 'https://acct.r2.cloudflarestorage.com');
+  assert.equal(uploadOriginOf('https://acct.r2.cloudflarestorage.com'), 'https://acct.r2.cloudflarestorage.com');
+  assert.equal(uploadOriginOf(undefined), null);
+  assert.equal(uploadOriginOf(''), null);
+});
+
+test('a bucket host cannot smuggle extra CSP directives', () => {
+  // The endpoint is configuration, not user input — but a header built by
+  // string concatenation from a config value is worth one assertion.
+  const out = contentSecurityPolicy({ uploadOrigin: uploadOriginOf('evil.example/x; script-src *') });
+  assert.ok(!out.includes('script-src *'), out);
+});
+
+// ── redirectTo carrying more than a flash ───────────────────────────────────
+
+test('redirectTo merges extra query params instead of making a second ?', () => {
+  // The bug this prevents: `redirectTo(`${path}?problem=x`, { error })` builds
+  // `path?problem=x?error=...`, and the browser reads the second half as part
+  // of the first value.
+  const q = new URLSearchParams();
+  q.append('problem', 'a|b');
+  q.append('problem', 'c|d');
+  const res = redirectTo('/dashboard/listings/x/edit', { query: q, error: 'no' });
+
+  const loc = res.headers.get('location')!;
+  assert.equal(loc.split('?').length, 2, `two query strings in one URL: ${loc}`);
+  const params = new URL(loc, 'https://portage.ca').searchParams;
+  assert.deepEqual(params.getAll('problem'), ['a|b', 'c|d']);
+  assert.equal(params.get('error'), 'no');
+});
+
+test('room type is offered on a rental and absent on a sale', () => {
+  // `roomTypeAllowed` refuses a room type on a sale, so a select that offers
+  // one there is a field whose only outcomes are "blank" and "rejected".
+  const rental = edit({ roomTypes: ROOM_TYPES });
+  assert.match(rental, /name="roomType"/);
+  assert.match(rental, /The whole place/, 'the keys should read as prose');
+
+  const sale = edit({ listing: { ...EDIT_LISTING, mode: 'sale' }, roomTypes: [] });
+  assert.ok(!sale.includes('name="roomType"'));
 });

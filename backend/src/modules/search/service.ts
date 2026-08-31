@@ -149,9 +149,13 @@ export class SearchService {
     if (listingIds.length === 0) return out;
 
     const res = await this.#db.query<{ listing_id: string; storage_key: string; mime: string }>(
+      // `status = 'stored'` matters more here than anywhere else: this picks
+      // ONE row per listing, so a reserved row at position 0 whose bytes never
+      // arrived would be the cover image on every search result for a listing
+      // that has perfectly good photos behind it.
       `SELECT DISTINCT ON (listing_id) listing_id, storage_key, mime
          FROM listing_media
-        WHERE listing_id = ANY($1::uuid[]) AND kind = 'photo'
+        WHERE listing_id = ANY($1::uuid[]) AND kind = 'photo' AND status = 'stored'
         ORDER BY listing_id, position, id`,
       [listingIds as string[]],
     );

@@ -149,7 +149,8 @@ interface URLSearchParams {
   toString(): string;
 }
 declare const URLSearchParams: {
-  new (init?: string | Record<string, string> | string[][]): URLSearchParams;
+  // A URLSearchParams is itself a valid init — that is how one is copied.
+  new (init?: string | Record<string, string> | string[][] | URLSearchParams): URLSearchParams;
 };
 interface URL {
   readonly searchParams: URLSearchParams;
