@@ -26,6 +26,9 @@ import {
   getListing, listMine, createListing, updateListing, transitionListing,
   attestDescription, addPhoto, removePhoto, reorderPhotos,
 } from './http/routes/listings.js';
+import {
+  searchListings, countListings, autocomplete, neighbourhoods, geoHealth,
+} from './http/routes/search.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -92,6 +95,15 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/api/auth/oauth/:provider', (req, p) => oauthStart(req, p['provider']!, oauthDeps));
   route('GET', '/api/auth/oauth/:provider/callback',
     (req, p) => oauthCallback(req, p['provider']!, oauthDeps));
+
+  const searchDeps = {
+    cfg: app.cfg, search: app.search, gazetteer: app.gazetteer, hsts: app.hsts,
+  };
+  route('GET', '/api/search/listings', (req) => searchListings(req, searchDeps));
+  route('GET', '/api/search/count', (req) => countListings(req, searchDeps));
+  route('GET', '/api/geo/autocomplete', (req) => autocomplete(req, searchDeps));
+  route('GET', '/api/geo/neighbourhoods', (req) => neighbourhoods(req, searchDeps));
+  route('GET', '/api/geo/health', (req) => geoHealth(req, searchDeps));
 
   const listingDeps = { cfg: app.cfg, listings: app.listings, hsts: app.hsts };
   // `/mine` is registered before `/:id`. Matching is first-wins, so the

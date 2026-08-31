@@ -163,15 +163,30 @@ export interface Viewer {
 
 export const ANONYMOUS: Viewer = { userId: null, role: 'user' };
 
+/**
+ * Resolves a typed address to an authoritative coordinate. Supplied by the
+ * gazetteer; optional so the service still works before it is loaded.
+ */
+export interface AddressResolver {
+  resolve(input: { addressLine: string; unit?: string | null; city: string; province: string }):
+    Promise<{ lat: number; lng: number; neighbourhoodId: string | null; postalCode: string | null } | null>;
+}
+
 export class ListingService {
   readonly #db: Sql;
   readonly #storageSecret: string;
   readonly #now: () => Date;
+  readonly #geocoder: AddressResolver | null;
 
-  constructor(db: Sql, storageSecret: string, opts: { now?: () => Date } = {}) {
+  constructor(
+    db: Sql,
+    storageSecret: string,
+    opts: { now?: () => Date; geocoder?: AddressResolver | null } = {},
+  ) {
     this.#db = db;
     this.#storageSecret = storageSecret;
     this.#now = opts.now ?? (() => new Date());
+    this.#geocoder = opts.geocoder ?? null;
   }
 
   // ── create ────────────────────────────────────────────────────────────────
@@ -202,16 +217,37 @@ export class ListingService {
     const description = input.description?.trim() || null;
     const source = input.descriptionSource ?? 'human';
 
+    // Coordinates come from the City of Regina gazetteer, never from Apple.
+    // Apple's licence defines latitude and longitude as Map Data and forbids
+    // retaining it, and a property row keeps its coordinate permanently — so
+    // the pin has to be geocoded from data we are allowed to store, and only
+    // RENDERED on an Apple map. Resolution failing is not an error: the
+    // listing is created without a coordinate and simply does not appear on
+    // the map until an address point matches.
+    const located = this.#geocoder
+      ? await this.#geocoder.resolve({
+          addressLine: input.address.addressLine,
+          unit: input.address.unit ?? null,
+          city,
+          province,
+        }).catch(() => null)
+      : null;
+
     return this.#db.transaction(async (tx) => {
       // Fill gaps on an existing property, never overwrite. Two owners can
       // legitimately reach the same row (a landlord and a previous seller),
       // and the second must not be able to rewrite the first's data.
       const prop = await tx.query<{ id: string }>(
-        `INSERT INTO properties (address_line, unit, address_norm, city, province, postal_code)
-         VALUES ($1,$2,$3,$4,$5,$6)
+        `INSERT INTO properties
+           (address_line, unit, address_norm, city, province, postal_code,
+            lat, lng, neighbourhood_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON CONFLICT (address_norm, city, province) DO UPDATE
-           SET postal_code = COALESCE(properties.postal_code, EXCLUDED.postal_code),
-               updated_at  = now()
+           SET postal_code      = COALESCE(properties.postal_code, EXCLUDED.postal_code),
+               lat              = COALESCE(properties.lat, EXCLUDED.lat),
+               lng              = COALESCE(properties.lng, EXCLUDED.lng),
+               neighbourhood_id = COALESCE(properties.neighbourhood_id, EXCLUDED.neighbourhood_id),
+               updated_at       = now()
          RETURNING id`,
         [
           input.address.addressLine.trim(),
@@ -219,7 +255,10 @@ export class ListingService {
           norm,
           city,
           province,
-          postal,
+          postal ?? located?.postalCode ?? null,
+          located?.lat ?? null,
+          located?.lng ?? null,
+          located?.neighbourhoodId ?? null,
         ],
       );
       const propertyId = prop.rows[0]!.id;

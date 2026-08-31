@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature",
+      "properties": { "OBJECTID": 1, "NAME": "Cathedral", "CITY": "Regina" },
+      "geometry": { "type": "Polygon", "coordinates": [[
+        [-104.630, 50.440], [-104.610, 50.440],
+        [-104.610, 50.455], [-104.630, 50.455], [-104.630, 50.440]]] } },
+    { "type": "Feature",
+      "properties": { "OBJECTID": 2, "NAME": "Lakeview" },
+      "geometry": { "type": "Polygon", "coordinates": [[
+        [-104.625, 50.420], [-104.605, 50.420],
+        [-104.605, 50.438], [-104.625, 50.438], [-104.625, 50.420]]] } }
+  ]
+}

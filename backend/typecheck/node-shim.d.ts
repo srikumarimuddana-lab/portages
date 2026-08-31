@@ -131,7 +131,16 @@ declare const Response: {
 declare const TextDecoder: {
   new (label?: string, opts?: { fatal?: boolean }): { decode(input?: Uint8Array): string };
 };
-interface URLSearchParams { get(name: string): string | null }
+interface URLSearchParams {
+  get(name: string): string | null;
+  getAll(name: string): string[];
+  set(name: string, value: string): void;
+  append(name: string, value: string): void;
+  toString(): string;
+}
+declare const URLSearchParams: {
+  new (init?: string | Record<string, string> | string[][]): URLSearchParams;
+};
 interface URL {
   readonly searchParams: URLSearchParams;
   readonly pathname: string;
