@@ -30,6 +30,7 @@ import { ChatSearchService } from '../modules/ai/chat-search.js';
 import { ListingBuilderService } from '../modules/ai/listing-builder.js';
 import { AiModerationService } from '../modules/ai/moderation.js';
 import { UNCONFIGURED, type ModelProvider } from '../modules/ai/provider.js';
+import { AiLedger, MeteredProvider } from '../modules/ai/ledger.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
 import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
@@ -63,6 +64,12 @@ export interface App {
   listingBuilder: ListingBuilderService;
   /** Second opinion on ambiguous messages. Can escalate, never de-escalate. */
   aiModeration: AiModerationService;
+  /** Spend and failure attribution per call. Read by the ops view. */
+  aiLedger: AiLedger;
+  /** The provider wrapped so no feature can make an unrecorded call. */
+  metered: MeteredProvider;
+  /** Per-account daily cap on model calls, on top of the global kill switch. */
+  aiLimiter: DurableRateLimiter;
   /** Caps new enquiries per account, separate from the IP buckets. */
   enquiryLimiter: DurableRateLimiter;
   /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
@@ -142,6 +149,11 @@ async function build(): Promise<App> {
     provider: aiProvider,
     model: env.ai?.models.listingBuilder ?? 'anthropic/claude-opus-5',
   });
+  // Wrapping means a feature cannot make an unrecorded call: it does not know
+  // it is metered and has no way to opt out. Attribution is added per request
+  // with `.for()`, which returns a bound copy rather than mutating a shared one.
+  const aiLedger = new AiLedger(db);
+  const metered = new MeteredProvider(aiProvider, aiLedger);
   const aiModeration = new AiModerationService({
     provider: aiProvider,
     model: env.ai?.models.moderation ?? 'anthropic/claude-haiku-4-5',
@@ -189,6 +201,10 @@ async function build(): Promise<App> {
     notify,
     appOrigin: env.publicOrigin || `http://localhost:${env.port}`,
     audit,
+    // Metered like every other AI call, and attributed to messages. The send
+    // path treats a slow or failing model as "no opinion" — the rules have
+    // already produced a defensible verdict.
+    aiModeration: aiModeration.withProvider(metered.for({ subjectType: 'message' })),
   });
   // One account messaging every listing in the city is the abuse that matters
   // here, and it looks like ordinary traffic to a per-IP bucket when the
@@ -197,6 +213,15 @@ async function build(): Promise<App> {
     windowMs: 60 * 60_000,
     max: 20,
   });
+
+  // The kill switch is global and the Gateway budget is account-wide; neither
+  // stops ONE account running up the bill. Requests rather than tokens,
+  // because maxTokens is already fixed per task — so a request cap IS a spend
+  // cap, and it reuses the durable limiter instead of inventing a second
+  // accounting mechanism. Fails CLOSED: a database blip must not open the
+  // budget, which is the opposite of the read limiter's choice and correct for
+  // the same reason.
+  const aiLimiter = new DurableRateLimiter(db, 'ai', { windowMs: 24 * 60 * 60_000, max: 60 });
 
   const oauth = new OAuthService(db, {
     credentials: env.oauth,
@@ -224,6 +249,7 @@ async function build(): Promise<App> {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
     gazetteer, search, uploads, messaging, audit, moderation, flags,
     aiProvider, chatSearch, listingBuilder, aiModeration,
+    aiLedger, metered, aiLimiter,
     enquiryLimiter, identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,

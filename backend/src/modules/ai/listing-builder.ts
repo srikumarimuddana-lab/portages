@@ -249,6 +249,11 @@ export class ListingBuilderService {
     this.#deps = deps;
   }
 
+  /** A copy bound to a metered provider carrying this request's actor. */
+  withProvider(provider: ModelProvider): ListingBuilderService {
+    return new ListingBuilderService({ ...this.#deps, provider });
+  }
+
   /**
    * Drafts a description.
    *

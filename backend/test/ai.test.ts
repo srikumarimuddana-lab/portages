@@ -25,6 +25,7 @@ import { GatewayProvider } from '../src/modules/ai/adapters/gateway.js';
 import { FENCE_RULE, fence, sanitize } from '../src/modules/ai/sanitize.js';
 import { AI_TASKS, TASK_FLAG, ProviderError, UNCONFIGURED } from '../src/modules/ai/provider.js';
 import { FLAG_KEYS } from '../src/modules/flags/registry.js';
+import { MeteredProvider, type CallRecord } from '../src/modules/ai/ledger.js';
 import {
   ListingBuilderService, factCheck,
 } from '../src/modules/ai/listing-builder.js';
@@ -831,4 +832,160 @@ test('moderation: triage runs at low effort with a small ceiling', async () => {
   assert.equal(calls[0]!.effort, 'low');
   assert.ok(calls[0]!.maxTokens <= 300);
   assert.equal(calls[0]!.task, 'moderation');
+});
+
+// ── the ledger and the metered provider ─────────────────────────────────────
+//
+// The property under test is that a feature CANNOT make an unrecorded call.
+// Wrapping is what buys that: three features times four outcomes is twelve
+// places to remember, and the one forgotten is always the error path — which
+// is exactly the row you want when the bill is wrong.
+
+function recorder() {
+  const rows: CallRecord[] = [];
+  return { rows, async record(e: CallRecord) { rows.push(e); } };
+}
+
+const okResult = (over: Partial<CompletionResult> = {}): CompletionResult => ({
+  text: '{}', usage: { inputTokens: 100, outputTokens: 20 },
+  model: 'anthropic/claude-haiku-4-5', stopReason: 'stop', refused: false, ...over,
+});
+
+test('ledger: a successful call is recorded with the model that SERVED it', async () => {
+  // Not the one requested. The Gateway fails over, and a bill nobody can
+  // attribute is a bill nobody can reduce.
+  const rec = recorder();
+  const inner: ModelProvider = {
+    name: 'test-gw',
+    async complete() { return okResult({ model: 'anthropic/claude-opus-5' }); },
+  };
+  await new MeteredProvider(inner, rec).complete({ ...REQ, model: 'anthropic/claude-haiku-4-5' });
+
+  assert.equal(rec.rows.length, 1);
+  assert.equal(rec.rows[0]!.model, 'anthropic/claude-opus-5');
+  assert.equal(rec.rows[0]!.provider, 'test-gw');
+  assert.equal(rec.rows[0]!.task, 'chat_search');
+  assert.equal(rec.rows[0]!.outcome, 'ok');
+  assert.equal(rec.rows[0]!.inputTokens, 100);
+});
+
+test('ledger: refused, unparseable, error and timeout are four different outcomes', async () => {
+  // Collapsing them hides a prompt regression inside what looks like provider
+  // flakiness. A refusal is billed and produces nothing; an error may not be.
+  const cases: Array<[ModelProvider['complete'], string]> = [
+    [async () => okResult({ refused: true }), 'refused'],
+    [async () => okResult({ json: undefined }), 'unparseable'],
+    [async () => { throw new ProviderError('boom', { status: 502 }); }, 'error'],
+    [async () => { throw new ProviderError('slow', { status: 504 }); }, 'timeout'],
+  ];
+  for (const [complete, expected] of cases) {
+    const rec = recorder();
+    const p = new MeteredProvider({ name: 'x', complete } as ModelProvider, rec);
+    await p.complete({ ...REQ, jsonSchema: { type: 'object' } }).catch(() => undefined);
+    assert.equal(rec.rows[0]!.outcome, expected);
+  }
+});
+
+test('ledger: a failed call is still recorded, and the error still propagates', async () => {
+  const rec = recorder();
+  const p = new MeteredProvider(
+    { name: 'x', async complete() { throw new ProviderError('down', { status: 502 }); } },
+    rec,
+  );
+  await assert.rejects(() => p.complete(REQ), (e: ProviderError) => e.status === 502);
+  assert.equal(rec.rows.length, 1, 'the row you most want is the one on the error path');
+});
+
+test('ledger: attribution is bound per call, never mutated on a shared instance', async () => {
+  // On a serverless instance handling concurrent requests, a mutable field
+  // would attribute one user's spend to whoever happened to be last.
+  const rec = recorder();
+  const base = new MeteredProvider({ name: 'x', async complete() { return okResult(); } }, rec);
+
+  const forAlice = base.for({ actorId: 'alice', subjectType: 'listing', subjectId: 'l-1' });
+  const forBob = base.for({ actorId: 'bob' });
+
+  await Promise.all([forAlice.complete(REQ), forBob.complete(REQ), base.complete(REQ)]);
+
+  const byActor = new Map(rec.rows.map((r) => [r.actorId ?? 'none', r]));
+  assert.equal(byActor.get('alice')!.subjectId, 'l-1');
+  assert.equal(byActor.get('bob')!.subjectId, undefined);
+  assert.ok(byActor.has('none'), 'the base provider stays unbound');
+});
+
+test('ledger: a write failure never fails the model call', async () => {
+  // A database blip taking down search, to record that we served it, is a
+  // real outage traded for a missing row in an observability table.
+  const p = new MeteredProvider(
+    { name: 'x', async complete() { return okResult({ text: 'fine' }); } },
+    { async record() { throw new Error('ai_calls is unreachable'); } },
+  );
+  const out = await p.complete(REQ);
+  assert.equal(out.text, 'fine');
+});
+
+test('ledger: latency is measured, not guessed', async () => {
+  let t = 1_000;
+  const rec = recorder();
+  const p = new MeteredProvider(
+    { name: 'x', async complete() { t += 250; return okResult(); } },
+    rec,
+    { now: () => t },
+  );
+  await p.complete(REQ);
+  assert.equal(rec.rows[0]!.latencyMs, 250);
+});
+
+test('ledger: no content reaches the record — not the prompt, not the reply', async () => {
+  // The hard line. A ledger holding message bodies would be a second copy of
+  // the most sensitive data on the site, outside the retention rules that
+  // govern `messages`.
+  const rec = recorder();
+  const p = new MeteredProvider(
+    { name: 'x', async complete() { return okResult({ text: 'SECRET REPLY BODY' }); } },
+    rec,
+  );
+  await p.complete({
+    ...REQ,
+    system: 'SECRET SYSTEM PROMPT',
+    messages: [{ role: 'user', content: 'SECRET USER MESSAGE' }],
+  });
+  const serialized = JSON.stringify(rec.rows[0]);
+  for (const secret of ['SECRET REPLY BODY', 'SECRET SYSTEM PROMPT', 'SECRET USER MESSAGE']) {
+    assert.ok(!serialized.includes(secret), `${secret} must not reach the ledger`);
+  }
+  assert.deepEqual(Object.keys(rec.rows[0]!).sort(), [
+    'inputTokens', 'latencyMs', 'model', 'outcome', 'outputTokens', 'provider', 'task',
+  ]);
+});
+
+test('ledger: a feature cannot opt out of being metered', async () => {
+  // withProvider is how a request binds attribution; there is no path that
+  // reaches the inner provider directly.
+  const rec = recorder();
+  const metered = new MeteredProvider(
+    { name: 'x', async complete() { return okResult({ json: { confident: false } }); } },
+    rec,
+  );
+  const search = new ChatSearchService({ provider: metered, model: 'm' });
+  await search.withProvider(metered.for({ actorId: 'u-1' })).interpret('two bed');
+  assert.equal(rec.rows.length, 1);
+  assert.equal(rec.rows[0]!.actorId, 'u-1');
+});
+
+test('withProvider returns a copy rather than rebinding the shared service', async () => {
+  const a = recorder();
+  const b = recorder();
+  const mk = (r: ReturnType<typeof recorder>) => new MeteredProvider(
+    { name: 'x', async complete() { return okResult({ json: { confident: false } }); } }, r,
+  );
+  const search = new ChatSearchService({ provider: mk(a), model: 'm' });
+  const bound = search.withProvider(mk(b));
+
+  await bound.interpret('two bed');
+  assert.equal(b.rows.length, 1);
+  assert.equal(a.rows.length, 0, 'the original service is untouched');
+
+  await search.interpret('two bed');
+  assert.equal(a.rows.length, 1, 'and still uses its own provider');
 });

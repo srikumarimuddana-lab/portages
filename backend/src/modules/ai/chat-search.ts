@@ -137,6 +137,18 @@ export class ChatSearchService {
   }
 
   /**
+   * A copy bound to a different provider — in practice a `MeteredProvider`
+   * carrying this request's actor.
+   *
+   * Returns a new instance rather than mutating: the service is built once
+   * per process and shared across concurrent requests, so a mutable provider
+   * field would attribute one user's spend to whoever happened to be last.
+   */
+  withProvider(provider: ModelProvider): ChatSearchService {
+    return new ChatSearchService({ ...this.#deps, provider });
+  }
+
+  /**
    * Turns a sentence into a filter.
    *
    * Never throws for a bad model reply. Every failure path returns a null spec

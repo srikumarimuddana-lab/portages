@@ -40,6 +40,7 @@ import {
   listFlags,
   setFlag,
 } from './http/routes/admin.js';
+import { aiSearch, describeListing } from './http/routes/ai.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -121,6 +122,15 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/api/uploads/preview', (req) => recordPreview(req, uploadDeps));
 
   // Admin. Every one of these answers 404 to a caller without the role.
+  const aiDeps = {
+    cfg: app.cfg, chatSearch: app.chatSearch, listingBuilder: app.listingBuilder,
+    search: app.search, gazetteer: app.gazetteer, listings: app.listings,
+    metered: app.metered, aiLimiter: app.aiLimiter, hsts: app.hsts,
+  };
+  route('POST', '/api/search/ai', (req) => aiSearch(req, aiDeps));
+  route('POST', '/api/listings/:id/describe',
+    (req, p) => describeListing(req, p['id']!, aiDeps));
+
   const adminDeps = {
     cfg: app.cfg, db: app.db, moderation: app.moderation, listings: app.listings,
     messaging: app.messaging, audit: app.audit, flags: app.flags, hsts: app.hsts,

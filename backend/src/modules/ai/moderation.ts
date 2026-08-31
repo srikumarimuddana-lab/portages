@@ -185,6 +185,11 @@ export class AiModerationService {
     this.#deps = deps;
   }
 
+  /** A copy bound to a metered provider carrying this message's attribution. */
+  withProvider(provider: ModelProvider): AiModerationService {
+    return new AiModerationService({ ...this.#deps, provider });
+  }
+
   /**
    * Adds a second opinion to a rule verdict.
    *

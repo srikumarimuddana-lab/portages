@@ -28,7 +28,17 @@ import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { idempotencyKeyFor } from '../notify/service.js';
 import type { NotifyService } from '../notify/service.js';
 import type { AuditRecorder } from '../audit/service.js';
+import type { AiModerationService } from '../ai/moderation.js';
 import type { Sql } from '../../db/pool.js';
+
+/**
+ * How long the send path will wait for an AI second opinion.
+ *
+ * Two seconds, not the adapter's twenty. This sits between a person pressing
+ * send and their message existing; a slow model must cost the opinion, never
+ * the message.
+ */
+const AI_TRIAGE_DEADLINE_MS = 2_000;
 
 export type ThreadStatus = 'open' | 'archived' | 'blocked';
 export type Party = 'owner' | 'inquirer';
@@ -82,6 +92,12 @@ export interface MessagingDeps {
   appOrigin: string;
   /** Records staff releases in the same transaction that makes them. */
   audit?: AuditRecorder | null;
+  /**
+   * Optional second opinion on ambiguous messages. Absent means rules only,
+   * which is exactly how this worked before AI existed and remains the
+   * behaviour whenever the model is off, slow, or wrong.
+   */
+  aiModeration?: AiModerationService | null;
   now?: () => Date;
 }
 
@@ -111,12 +127,14 @@ export class MessagingService {
   readonly #origin: string;
   readonly #now: () => Date;
   readonly #audit: AuditRecorder | null;
+  readonly #aiModeration: AiModerationService | null;
 
   constructor(deps: MessagingDeps) {
     this.#db = deps.db;
     this.#notify = deps.notify;
     this.#origin = deps.appOrigin;
     this.#audit = deps.audit ?? null;
+    this.#aiModeration = deps.aiModeration ?? null;
     this.#now = deps.now ?? (() => new Date());
   }
 
@@ -229,7 +247,39 @@ export class MessagingService {
       threadMessageCount: count,
       senderIsOwner: input.senderIsOwner,
     });
-    const delivered = scan.verdict !== 'block';
+
+    // AI triage, when it is wired and the rules were unsure. It can raise the
+    // verdict and never lower it — see modules/ai/moderation.ts for why that
+    // asymmetry is the entire safety argument.
+    //
+    // A DEADLINE, not just the adapter's own timeout: this sits between a
+    // person pressing send and their message existing, and twenty seconds of
+    // "sending..." is worse than a message the rules judged alone. Two
+    // seconds is enough for the small classification call this makes, and
+    // triage() treats a miss as "no opinion" rather than an error.
+    let verdict = scan.verdict;
+    let signals = scan.signals;
+    if (this.#aiModeration) {
+      const deadline = new AbortController();
+      const timer = setTimeout(() => deadline.abort(), AI_TRIAGE_DEADLINE_MS);
+      try {
+        const triage = await this.#aiModeration.triage(
+          {
+            body: input.body,
+            scan,
+            threadMessageCount: count,
+            senderIsOwner: input.senderIsOwner,
+          },
+          { signal: deadline.signal },
+        );
+        verdict = triage.verdict;
+        if (triage.added.length > 0) signals = [...signals, ...triage.added];
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    const delivered = verdict !== 'block';
     const now = this.#now();
 
     const messageId = await this.#db.transaction(async (tx) => {
@@ -240,8 +290,8 @@ export class MessagingService {
          VALUES ($1,$2,$3,$4,now(),$5,$6,$7)
          RETURNING id`,
         [
-          input.threadId, input.senderId, input.body, scan.verdict,
-          scan.signals.map((s) => s.reason),
+          input.threadId, input.senderId, input.body, verdict,
+          signals.map((s) => s.reason),
           delivered ? now : null,
           count === 0,
         ],
@@ -258,8 +308,8 @@ export class MessagingService {
         );
       }
 
-      if (scan.verdict !== 'allow') {
-        for (const s of scan.signals) {
+      if (verdict !== 'allow') {
+        for (const s of signals) {
           await tx.query(
             `INSERT INTO risk_signals (subject_type, subject_id, signal, weight, detail)
              VALUES ('message', $1, $2, $3, $4)`,
@@ -273,7 +323,7 @@ export class MessagingService {
            VALUES ('message', $1, $2, $3)
            ON CONFLICT (subject_type, subject_id) WHERE state = 'open'
            DO UPDATE SET risk_score = EXCLUDED.risk_score`,
-          [inserted.rows[0]!.id, `message_${scan.verdict}`, riskScoreOf(scan.signals)],
+          [inserted.rows[0]!.id, `message_${verdict}`, riskScoreOf(signals)],
         );
       }
 
@@ -281,7 +331,7 @@ export class MessagingService {
     });
 
     if (!delivered) {
-      return { ok: false, verdict: scan.verdict, notice: BLOCKED_NOTICE };
+      return { ok: false, verdict, notice: BLOCKED_NOTICE };
     }
 
     await this.#notifyRecipient({
@@ -289,14 +339,20 @@ export class MessagingService {
       threadId: input.threadId,
       listingTitle: input.listingTitle,
       body: input.body,
-      verdict: scan.verdict,
+      // The merged verdict, not the rules' one. previewFor omits the body of
+      // a flagged message, so an AI escalation from allow to flag must reach
+      // here — otherwise a message we just judged risky arrives in full in
+      // the recipient's email, which is the one place the warning is not.
+      verdict,
       messageId,
     });
 
     return {
       ok: true,
       messageId,
-      verdict: scan.verdict,
+      verdict,
+      // suggestsClosed comes from the rules and is about the owner saying the
+      // unit is gone. AI has no opinion on it and does not get one.
       ...(scan.suggestsClosed ? { suggestsClosed: true } : {}),
     };
   }
