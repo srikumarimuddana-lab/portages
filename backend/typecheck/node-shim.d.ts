@@ -73,6 +73,7 @@ declare const Buffer: {
   from(v: string | ArrayBufferLike | Uint8Array | readonly number[], enc?: string): Buffer;
   concat(list: readonly Uint8Array[]): Buffer;
   alloc(size: number, fill?: number): Buffer;
+  isBuffer(v: unknown): v is Buffer;
 };
 interface ImportMeta { url: string }
 

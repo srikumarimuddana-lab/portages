@@ -34,6 +34,10 @@ import {
   listThreads, unreadCount, getThread, startThread, replyToThread,
   markThreadRead, archiveThread, blockThread, unblockThread, listingThreads,
 } from './http/routes/messages.js';
+import {
+  listQueue, queueStats, getQueueItem, dismissQueueItem,
+  decideListing, reviewMessage, decideMessage, listAudit,
+} from './http/routes/admin.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -113,6 +117,23 @@ async function buildRoutes(): Promise<void> {
   const uploadDeps = { cfg: app.cfg, uploads: app.uploads, hsts: app.hsts };
   route('POST', '/api/uploads/complete', (req) => completeUpload(req, uploadDeps));
   route('POST', '/api/uploads/preview', (req) => recordPreview(req, uploadDeps));
+
+  // Admin. Every one of these answers 404 to a caller without the role.
+  const adminDeps = {
+    cfg: app.cfg, db: app.db, moderation: app.moderation, listings: app.listings,
+    messaging: app.messaging, audit: app.audit, hsts: app.hsts,
+  };
+  route('GET', '/api/admin/queue/stats', (req) => queueStats(req, adminDeps));
+  route('GET', '/api/admin/queue', (req) => listQueue(req, adminDeps));
+  route('GET', '/api/admin/queue/:id', (req, p) => getQueueItem(req, p['id']!, adminDeps));
+  route('POST', '/api/admin/queue/:id/dismiss',
+    (req, p) => dismissQueueItem(req, p['id']!, adminDeps));
+  route('POST', '/api/admin/listings/:id/decide',
+    (req, p) => decideListing(req, p['id']!, adminDeps));
+  route('GET', '/api/admin/messages/:id', (req, p) => reviewMessage(req, p['id']!, adminDeps));
+  route('POST', '/api/admin/messages/:id/decide',
+    (req, p) => decideMessage(req, p['id']!, adminDeps));
+  route('GET', '/api/admin/audit', (req) => listAudit(req, adminDeps));
 
   const msgDeps = {
     cfg: app.cfg, messaging: app.messaging, hsts: app.hsts,

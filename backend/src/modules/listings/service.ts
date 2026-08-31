@@ -48,6 +48,7 @@ import {
   type ListingStatus,
 } from './state.js';
 import { signStorageUrl } from '../../lib/crypto.js';
+import type { AuditRecorder } from '../audit/service.js';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import type { Sql } from '../../db/pool.js';
 
@@ -196,6 +197,8 @@ export class ListingService {
   readonly #now: () => Date;
   readonly #geocoder: AddressResolver | null;
   readonly #uploads: UploadTicketIssuer | null;
+  /** Records staff decisions inside the same transaction that makes them. */
+  readonly #audit: AuditRecorder | null;
 
   constructor(
     db: Sql,
@@ -204,6 +207,7 @@ export class ListingService {
       now?: () => Date;
       geocoder?: AddressResolver | null;
       uploads?: UploadTicketIssuer | null;
+      audit?: AuditRecorder | null;
     } = {},
   ) {
     this.#db = db;
@@ -211,6 +215,7 @@ export class ListingService {
     this.#now = opts.now ?? (() => new Date());
     this.#geocoder = opts.geocoder ?? null;
     this.#uploads = opts.uploads ?? null;
+    this.#audit = opts.audit ?? null;
   }
 
   // ── create ────────────────────────────────────────────────────────────────
@@ -525,7 +530,7 @@ export class ListingService {
     listingId: string,
     viewer: Viewer,
     action: ListingAction,
-    opts: { reason?: string } = {},
+    opts: { reason?: string; ip?: string } = {},
   ): Promise<{ status: ListingStatus }> {
     return this.#db.transaction(async (tx) => {
       const res = await tx.query<ListingRow & { email_verified_at: Date | null }>(
@@ -583,7 +588,9 @@ export class ListingService {
         throw err;
       }
 
-      // A staff decision closes the queue entry it was made from.
+      // A staff decision closes the queue entry it was made from, and is
+      // recorded. Both happen inside THIS transaction, so a decision cannot
+      // exist without its audit entry or the other way round.
       if (isStaff && (verdict.to === 'live' || verdict.to === 'rejected')) {
         await tx.query(
           `UPDATE moderation_queue
@@ -591,6 +598,20 @@ export class ListingService {
             WHERE subject_type = 'listing' AND subject_id = $1 AND state = 'open'`,
           [listingId, viewer.userId, verdict.to === 'live' ? 'approved' : 'rejected'],
         );
+
+        await this.#audit?.record(tx, {
+          actorId: viewer.userId!,
+          actorRole: viewer.role,
+          action: verdict.to === 'live' ? 'listing.approve' : 'listing.reject',
+          subject: 'listing',
+          subjectId: listingId,
+          before: { status: row.status },
+          after: {
+            status: verdict.to,
+            ...(opts.reason ? { reason: opts.reason } : {}),
+          },
+          ip: opts.ip,
+        });
       }
 
       return { status: verdict.to };

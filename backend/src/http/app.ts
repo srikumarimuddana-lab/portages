@@ -22,6 +22,8 @@ import { SearchService } from '../modules/search/service.js';
 import { S3Storage } from '../modules/storage/s3.js';
 import { UploadService } from '../modules/storage/service.js';
 import { MessagingService } from '../modules/messaging/service.js';
+import { AuditService } from '../modules/audit/service.js';
+import { ModerationService } from '../modules/admin/moderation.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
 import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
@@ -43,6 +45,8 @@ export interface App {
   /** Absent when object storage is not configured; uploads report 503. */
   uploads: UploadService | null;
   messaging: MessagingService;
+  audit: AuditService;
+  moderation: ModerationService;
   /** Caps new enquiries per account, separate from the IP buckets. */
   enquiryLimiter: DurableRateLimiter;
   /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
@@ -64,6 +68,10 @@ async function build(): Promise<App> {
   const db = await createPool(env.databaseUrl);
   const auth = new AuthService({ db, pepper: env.pepper });
   const documents = new DocumentService(db, env.storageSecret);
+  // Built before anything that writes to it: an audit trail added later has
+  // no rows for the period before it.
+  const audit = new AuditService(env.pepper);
+  const moderation = new ModerationService(db);
   const gazetteer = new Gazetteer(db);
   const search = new SearchService(db);
   // Object storage is optional. Without it the site still browses and
@@ -91,6 +99,7 @@ async function build(): Promise<App> {
   const listings = new ListingService(db, env.storageSecret, {
     geocoder: gazetteer,
     uploads,
+    audit,
   });
   const mapkit = env.mapkit ? new MapKitTokenIssuer(env.mapkit) : null;
   // A channel is only live when BOTH the AWS credentials and its own sender
@@ -128,6 +137,7 @@ async function build(): Promise<App> {
     db,
     notify,
     appOrigin: env.publicOrigin || `http://localhost:${env.port}`,
+    audit,
   });
   // One account messaging every listing in the city is the abuse that matters
   // here, and it looks like ordinary traffic to a per-IP bucket when the
@@ -160,7 +170,8 @@ async function build(): Promise<App> {
 
   return {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
-    gazetteer, search, uploads, messaging, enquiryLimiter, identifierLimiter, cfg,
+    gazetteer, search, uploads, messaging, audit, moderation,
+    enquiryLimiter, identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,
   };

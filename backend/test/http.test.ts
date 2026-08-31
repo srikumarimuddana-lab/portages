@@ -351,3 +351,109 @@ test('headers: API CSP forbids everything by default', () => {
   assert.match(csp, /frame-ancestors 'none'/);
   assert.match(csp, /base-uri 'none'/);
 });
+
+// ── RBAC ────────────────────────────────────────────────────────────────────
+//
+// `requireRole` answers 404, not 403, and that is the behaviour under test.
+// A 403 tells a stranger the route exists and is worth attacking; to everyone
+// without the role it must be indistinguishable from a route that is not there.
+
+function sessionAs(role: 'user' | 'staff' | 'admin') {
+  const m = createSessionMaterial();
+  const sessions = new Map([[m.sessionToken, { userId: 'u1', sessionId: 's1', csrfHash: m.csrfHash, role }]]);
+  return { m, cfg: makeCfg({ auth: fakeAuth(sessions) }) };
+}
+
+const asRole = (m: ReturnType<typeof createSessionMaterial>, method = 'GET') =>
+  req(method, {
+    origin: ORIGIN,
+    cookie: `${SESSION_COOKIE}=${m.sessionToken}; ${CSRF_COOKIE}=${m.csrfToken}`,
+    csrf: m.csrfToken,
+    ...(method === 'GET' ? {} : { body: {} }),
+  });
+
+test('guard: an ordinary user gets 404 from a staff route, never 403', async () => {
+  const { m, cfg } = sessionAs('user');
+  await expectError(
+    () => guard(asRole(m), cfg, { requireAuth: true, limit: 'read', requireRole: ['staff', 'admin'] }),
+    404,
+    'user reaching a staff route',
+  );
+});
+
+test('guard: an anonymous caller gets 404 from a staff route, not 401', async () => {
+  // 401 would say "there is something here to log in for". There must not be
+  // a way to enumerate the admin surface from the outside.
+  await expectError(
+    () => guard(req('GET', { origin: ORIGIN }), makeCfg(), {
+      requireAuth: true, limit: 'read', requireRole: ['staff', 'admin'],
+    }),
+    404,
+    'anonymous reaching a staff route',
+  );
+});
+
+test('guard: staff reach staff routes', async () => {
+  const { m, cfg } = sessionAs('staff');
+  const { ctx } = await guard(asRole(m), cfg, {
+    requireAuth: true, limit: 'read', requireRole: ['staff', 'admin'],
+  });
+  assert.equal(ctx.principal?.role, 'staff');
+});
+
+test('guard: staff do NOT reach admin-only routes', async () => {
+  // The whole point of the split: a part-time moderator can work the queue
+  // without gaining the ability to read everyone's decisions or turn the site
+  // off. If this passes for staff, the two roles are one role.
+  const { m, cfg } = sessionAs('staff');
+  await expectError(
+    () => guard(asRole(m), cfg, { requireAuth: true, limit: 'read', requireRole: ['admin'] }),
+    404,
+    'staff reaching an admin-only route',
+  );
+});
+
+test('guard: admin reach admin-only routes', async () => {
+  const { m, cfg } = sessionAs('admin');
+  const { ctx } = await guard(asRole(m), cfg, {
+    requireAuth: true, limit: 'read', requireRole: ['admin'],
+  });
+  assert.equal(ctx.principal?.role, 'admin');
+});
+
+test('guard: the role gate runs before the body is trusted, and cannot be set by one', async () => {
+  // The role comes from the session row on every request. A body field named
+  // `role` is just a field, and the guard's schema validation rejects unknown
+  // ones anyway — but the gate must not depend on that having happened.
+  const { m, cfg } = sessionAs('user');
+  const forged = req('POST', {
+    origin: ORIGIN,
+    cookie: `${SESSION_COOKIE}=${m.sessionToken}; ${CSRF_COOKIE}=${m.csrfToken}`,
+    csrf: m.csrfToken,
+    body: { role: 'admin' },
+  });
+  await expectError(
+    () => guard(forged, cfg, { requireAuth: true, limit: 'write', requireRole: ['admin'] }),
+    404,
+    'role claimed in a body',
+  );
+});
+
+test('guard: a staff route still enforces CSRF on writes', async () => {
+  // Being staff is not a reason to skip the check — a moderator with an open
+  // session is the single most valuable target for a cross-site write.
+  const { m, cfg } = sessionAs('staff');
+  await expectError(
+    () => guard(
+      req('POST', {
+        origin: ORIGIN,
+        cookie: `${SESSION_COOKIE}=${m.sessionToken}; ${CSRF_COOKIE}=${m.csrfToken}`,
+        body: {},
+      }),
+      cfg,
+      { requireAuth: true, limit: 'write', requireRole: ['staff', 'admin'] },
+    ),
+    403,
+    'staff write without CSRF',
+  );
+});

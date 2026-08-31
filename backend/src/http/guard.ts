@@ -176,14 +176,19 @@ export async function guard<T = undefined>(
       csrfHash = resolved.csrfHash;
     }
   }
-  if (opts.requireAuth && !ctx.principal) throw unauthorized();
-
   // Role gate. Deliberately a 404, not a 403: an admin route that answers
   // "forbidden" to a non-staff caller has just confirmed the route exists and
   // is worth attacking. To everyone without the role, it is not there.
+  //
+  // It runs BEFORE the auth check, not after, and the order is the point. A
+  // 401 to an anonymous caller says "there is something here worth logging in
+  // for" just as loudly as a 403 does — it would leak the whole admin surface
+  // to anyone with a URL list and no session at all, which is the cheapest
+  // possible probe.
   if (opts.requireRole && (!ctx.principal || !opts.requireRole.includes(ctx.principal.role))) {
     throw notFound();
   }
+  if (opts.requireAuth && !ctx.principal) throw unauthorized();
 
   // 6. CSRF, for authenticated writes. An anonymous write (signup, login) has
   //    no session to protect, and the origin check above already covers it.

@@ -27,6 +27,7 @@ import {
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { idempotencyKeyFor } from '../notify/service.js';
 import type { NotifyService } from '../notify/service.js';
+import type { AuditRecorder } from '../audit/service.js';
 import type { Sql } from '../../db/pool.js';
 
 export type ThreadStatus = 'open' | 'archived' | 'blocked';
@@ -79,7 +80,16 @@ export interface MessagingDeps {
   notify: NotifyService;
   /** Public origin, for links in notification emails. */
   appOrigin: string;
+  /** Records staff releases in the same transaction that makes them. */
+  audit?: AuditRecorder | null;
   now?: () => Date;
+}
+
+/** Who is acting, when a staff member reviews a withheld message. */
+export interface StaffViewer {
+  userId: string;
+  role: 'staff' | 'admin';
+  ip?: string | undefined;
 }
 
 interface ThreadRow {
@@ -100,11 +110,13 @@ export class MessagingService {
   readonly #notify: NotifyService;
   readonly #origin: string;
   readonly #now: () => Date;
+  readonly #audit: AuditRecorder | null;
 
   constructor(deps: MessagingDeps) {
     this.#db = deps.db;
     this.#notify = deps.notify;
     this.#origin = deps.appOrigin;
+    this.#audit = deps.audit ?? null;
     this.#now = deps.now ?? (() => new Date());
   }
 
@@ -340,6 +352,233 @@ export class MessagingService {
       // A notification failure must not fail the send. The message is already
       // written and visible in the recipient's inbox; the email is a nudge.
     }
+  }
+
+  // ── staff review of withheld messages ─────────────────────────────────────
+
+  /**
+   * Reads a message a moderator is deciding on, withheld ones included.
+   *
+   * Every other read path in this file filters on `delivered_at IS NOT NULL`.
+   * This is the one that does not, which is the whole reason it exists: a
+   * blocked message is invisible to its recipient and unknown to everyone
+   * except the sender, so without a staff view there is no one who can see
+   * that the heuristic got it wrong.
+   *
+   * The surrounding thread comes with it, because the same sentence means
+   * different things in message one and message ten — and that is exactly the
+   * judgement the scanner made and a human is now checking.
+   */
+  async reviewMessage(messageId: string, viewer: StaffViewer): Promise<{
+    id: string;
+    body: string;
+    verdict: string;
+    flaggedReasons: string[];
+    delivered: boolean;
+    isFirstContact: boolean;
+    createdAt: Date;
+    sender: { id: string; email: string; emailVerified: boolean; blockedCount: number };
+    recipient: { id: string; email: string };
+    listing: { id: string; title: string };
+    /** Delivered messages around it, oldest first. */
+    context: MessageView[];
+  }> {
+    const res = await this.#db.query<{
+      id: string; thread_id: string; sender_id: string; body: string;
+      moderation_verdict: string; flagged_reasons: string[]; delivered_at: Date | null;
+      is_first_contact: boolean; created_at: Date;
+      owner_id: string; inquirer_id: string; listing_id: string; listing_title: string;
+      sender_email: string; sender_verified: Date | null;
+    }>(
+      `SELECT m.id, m.thread_id, m.sender_id, m.body, m.moderation_verdict,
+              m.flagged_reasons, m.delivered_at, m.is_first_contact, m.created_at,
+              t.owner_id, t.inquirer_id, t.listing_id,
+              l.title AS listing_title,
+              u.email AS sender_email, u.email_verified_at AS sender_verified
+         FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+         JOIN listings l ON l.id = t.listing_id
+         JOIN users u ON u.id = m.sender_id
+        WHERE m.id = $1`,
+      [messageId],
+    );
+    const row = res.rows[0];
+    if (!row) throw notFound('Message not found.');
+
+    const recipientId = row.sender_id === row.owner_id ? row.inquirer_id : row.owner_id;
+    const recipient = await this.#db.query<{ email: string }>(
+      'SELECT email FROM users WHERE id = $1',
+      [recipientId],
+    );
+
+    // Prior blocks by this sender. A first offence and a fourth are different
+    // decisions, and the number is the difference.
+    const priors = await this.#db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM messages
+        WHERE sender_id = $1 AND moderation_verdict = 'block' AND id <> $2`,
+      [row.sender_id, messageId],
+    );
+
+    const context = await this.#db.query<{
+      id: string; sender_id: string; body: string; kind: string;
+      created_at: Date; moderation_verdict: string;
+    }>(
+      `SELECT id, sender_id, body, kind, created_at, moderation_verdict
+         FROM messages
+        WHERE thread_id = $1 AND delivered_at IS NOT NULL
+        ORDER BY created_at
+        LIMIT 40`,
+      [row.thread_id],
+    );
+
+    return {
+      id: row.id,
+      body: row.body,
+      verdict: row.moderation_verdict,
+      flaggedReasons: row.flagged_reasons,
+      delivered: row.delivered_at !== null,
+      isFirstContact: row.is_first_contact,
+      createdAt: row.created_at,
+      sender: {
+        id: row.sender_id,
+        email: row.sender_email,
+        emailVerified: row.sender_verified !== null,
+        blockedCount: Number(priors.rows[0]?.n ?? 0),
+      },
+      recipient: { id: recipientId, email: recipient.rows[0]?.email ?? '' },
+      listing: { id: row.listing_id, title: row.listing_title },
+      context: context.rows.map((m) => ({
+        id: m.id,
+        senderId: m.sender_id,
+        body: m.body,
+        kind: m.kind,
+        createdAt: m.created_at,
+        flagged: m.moderation_verdict === 'flag',
+        mine: false,
+      })),
+    };
+  }
+
+  /**
+   * Delivers a message the scanner withheld.
+   *
+   * This is the other half of blocking. `#post` refuses delivery on a verdict
+   * and tells nobody; without a way to undo that, an honest sender whose
+   * wording tripped a rule is silently censored and has no route to anyone who
+   * could look. Release is that route.
+   *
+   * The message is delivered as of NOW rather than backdated to when it was
+   * written: the recipient is seeing it for the first time, and a message that
+   * appears three days up the thread is one they will never notice.
+   */
+  async release(messageId: string, viewer: StaffViewer): Promise<{ delivered: boolean }> {
+    const now = this.#now();
+
+    const outcome = await this.#db.transaction(async (tx) => {
+      const res = await tx.query<{
+        id: string; thread_id: string; sender_id: string; body: string;
+        moderation_verdict: string; delivered_at: Date | null;
+        owner_id: string; inquirer_id: string; listing_title: string;
+      }>(
+        `SELECT m.id, m.thread_id, m.sender_id, m.body, m.moderation_verdict,
+                m.delivered_at, t.owner_id, t.inquirer_id, l.title AS listing_title
+           FROM messages m
+           JOIN threads t ON t.id = m.thread_id
+           JOIN listings l ON l.id = t.listing_id
+          WHERE m.id = $1
+          FOR UPDATE OF m`,
+        [messageId],
+      );
+      const row = res.rows[0];
+      if (!row) throw notFound('Message not found.');
+      if (row.delivered_at !== null) {
+        // Already through. Releasing twice would double-count the thread and
+        // send a second notification for one message.
+        throw conflict('That message has already been delivered.');
+      }
+
+      await tx.query(
+        `UPDATE messages
+            SET delivered_at = $2, moderation_verdict = 'allow'
+          WHERE id = $1`,
+        [messageId, now],
+      );
+      await tx.query(
+        `UPDATE threads
+            SET last_at = $2, message_count = message_count + 1
+          WHERE id = $1`,
+        [row.thread_id, now],
+      );
+      await tx.query(
+        `UPDATE moderation_queue
+            SET state = 'approved', decided_by = $2, decided_at = now()
+          WHERE subject_type = 'message' AND subject_id = $1 AND state = 'open'`,
+        [messageId, viewer.userId],
+      );
+
+      await this.#audit?.record(tx, {
+        actorId: viewer.userId,
+        actorRole: viewer.role,
+        action: 'message.release',
+        subject: 'message',
+        subjectId: messageId,
+        before: { verdict: row.moderation_verdict, delivered: false },
+        after: { verdict: 'allow', delivered: true },
+        ip: viewer.ip,
+      });
+
+      const recipientId = row.sender_id === row.owner_id ? row.inquirer_id : row.owner_id;
+      return { recipientId, listingTitle: row.listing_title, threadId: row.thread_id, body: row.body };
+    });
+
+    // Notify outside the transaction: a mail failure must not roll back a
+    // decision a human already made.
+    await this.#notifyRecipient({
+      recipientId: outcome.recipientId,
+      threadId: outcome.threadId,
+      listingTitle: outcome.listingTitle,
+      body: outcome.body,
+      verdict: 'allow',
+      messageId,
+    });
+
+    return { delivered: true };
+  }
+
+  /**
+   * Confirms a block was right. The message stays undelivered; the queue entry
+   * closes so the same decision is not made twice.
+   */
+  async uphold(messageId: string, viewer: StaffViewer): Promise<void> {
+    await this.#db.transaction(async (tx) => {
+      const res = await tx.query<{ id: string; moderation_verdict: string; delivered_at: Date | null }>(
+        'SELECT id, moderation_verdict, delivered_at FROM messages WHERE id = $1 FOR UPDATE',
+        [messageId],
+      );
+      const row = res.rows[0];
+      if (!row) throw notFound('Message not found.');
+      if (row.delivered_at !== null) {
+        throw conflict('That message was delivered and cannot be withheld now.');
+      }
+
+      await tx.query(
+        `UPDATE moderation_queue
+            SET state = 'rejected', decided_by = $2, decided_at = now()
+          WHERE subject_type = 'message' AND subject_id = $1 AND state = 'open'`,
+        [messageId, viewer.userId],
+      );
+
+      await this.#audit?.record(tx, {
+        actorId: viewer.userId,
+        actorRole: viewer.role,
+        action: 'message.uphold',
+        subject: 'message',
+        subjectId: messageId,
+        before: { verdict: row.moderation_verdict },
+        after: { verdict: row.moderation_verdict, upheld: true },
+        ip: viewer.ip,
+      });
+    });
   }
 
   // ── reading ───────────────────────────────────────────────────────────────
