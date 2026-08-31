@@ -31,6 +31,7 @@ import { ListingBuilderService } from '../modules/ai/listing-builder.js';
 import { AiModerationService } from '../modules/ai/moderation.js';
 import { UNCONFIGURED, type ModelProvider } from '../modules/ai/provider.js';
 import { AiLedger, MeteredProvider } from '../modules/ai/ledger.js';
+import { ReportService } from '../modules/trust/reports.js';
 import { EmailChannel } from '../modules/notify/channels/email.js';
 import { SmsChannel } from '../modules/notify/channels/sms.js';
 import { WhatsAppChannel } from '../modules/notify/channels/whatsapp.js';
@@ -70,6 +71,8 @@ export interface App {
   metered: MeteredProvider;
   /** Per-account daily cap on model calls, on top of the global kill switch. */
   aiLimiter: DurableRateLimiter;
+  /** User reports — the human producer for the moderation queue. */
+  reports: ReportService;
   /** Caps new enquiries per account, separate from the IP buckets. */
   enquiryLimiter: DurableRateLimiter;
   /** Per-identifier limiter for OTP endpoints, separate from the IP buckets. */
@@ -95,6 +98,9 @@ async function build(): Promise<App> {
   // no rows for the period before it.
   const audit = new AuditService(env.pepper);
   const moderation = new ModerationService(db);
+  // The last missing producer for moderation_queue. Audited, because closing
+  // a report is a staff decision like any other.
+  const reports = new ReportService({ db, audit });
   // Built before anything that reads a switch, and given the audit
   // recorder so a flip cannot happen without a record of who flipped it.
   const flags = new FlagService(db, { audit });
@@ -249,7 +255,7 @@ async function build(): Promise<App> {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
     gazetteer, search, uploads, messaging, audit, moderation, flags,
     aiProvider, chatSearch, listingBuilder, aiModeration,
-    aiLedger, metered, aiLimiter,
+    aiLedger, metered, aiLimiter, reports,
     enquiryLimiter, identifierLimiter, cfg,
     hsts: env.nodeEnv === 'production',
     secureCookies: env.secureCookies,

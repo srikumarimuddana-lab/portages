@@ -41,6 +41,7 @@ import {
   setFlag,
 } from './http/routes/admin.js';
 import { aiSearch, describeListing } from './http/routes/ai.js';
+import { createReport, listReports, decideReports } from './http/routes/reports.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -130,6 +131,13 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/api/search/ai', (req) => aiSearch(req, aiDeps));
   route('POST', '/api/listings/:id/describe',
     (req, p) => describeListing(req, p['id']!, aiDeps));
+
+  const reportDeps = { cfg: app.cfg, reports: app.reports, hsts: app.hsts };
+  route('POST', '/api/reports', (req) => createReport(req, reportDeps));
+  route('GET', '/api/admin/reports/:type/:id',
+    (req, p) => listReports(req, p['type']!, p['id']!, reportDeps));
+  route('POST', '/api/admin/reports/:type/:id/decide',
+    (req, p) => decideReports(req, p['type']!, p['id']!, reportDeps));
 
   const adminDeps = {
     cfg: app.cfg, db: app.db, moderation: app.moderation, listings: app.listings,

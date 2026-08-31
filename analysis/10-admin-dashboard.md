@@ -234,7 +234,7 @@ is fine. The first is the trap.
 | 4 | Ops dashboard | 1 | Every number already exists in a table | |
 | 5 | Users + suspend | 1 | Enforcement is built; nothing triggers it | |
 | 6 | `feature_flags` + kill switches | 1 | New table — design in [11](11-configuration-and-kill-switches.md) | **shipped** |
-| 7 | Report control (public) + report queue | 2 | Human signal beats regex signal | |
+| 7 | Report control (public) + report queue | 2 | Human signal beats regex signal | **shipped** |
 
 Steps 1–3 are the ones without which the product does not function. Everything
 after is operability.
@@ -252,8 +252,22 @@ Writing the RBAC tests found a leak in the gate itself: `requireRole` ran
 an admin route. A 401 announces that a route exists as loudly as a 403 does.
 The gate now runs first.
 
-One of the four gaps in §1 remains open: **there is still no producer for
-`reports`** (step 7 — a user cannot report anything, so the queue holds only
-what the heuristics caught). `feature_flags` now exists and is wired at every
-outbound channel and content-creation route; `verifications` has a reader in
-the OTP flow.
+**All four gaps in §1 are now closed.** `reports` has a producer
+(`POST /api/reports`) and a reader; `feature_flags` exists and is wired at
+every outbound channel and content-creation route; `audit_log` has a writer;
+`requireRole` guards fourteen routes. `verifications` has a reader in the OTP
+flow.
+
+The moderation queue now has three producers — a listing on submit, a message
+on flag, and a person pressing report — which was the point. A regex does not
+know that the photos are of the reporter's own living room.
+
+The design problem in step 7 turned out not to be collection but
+**corroboration**. Ten people reporting one listing is evidence; one person
+reporting it ten times is one opinion, or a grudge, and a `count(*)` cannot
+tell them apart. So a partial unique index makes the second impossible, the
+risk score is computed from *distinct* reporters, and the corroboration
+multiplier is sub-linear and capped — because forty accounts is an afternoon's
+work for someone motivated, and an auto-takedown at five reports would make
+Portage trivially weaponisable against a competitor. **Reports raise queue
+position; they never act.**
