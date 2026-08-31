@@ -233,6 +233,78 @@ export async function attestListingAction(
   }
 }
 
+/**
+ * POST /dashboard/listings/:id/photos/:photoId/move — reordering, as buttons.
+ *
+ * WHY THIS EXISTS RATHER THAN DRAG-AND-DROP. HTML5 drag-and-drop does not
+ * fire on touch. A phone is where these photos were taken and where they will
+ * be uploaded, so a drag handle is a control that most of the people using
+ * this page do not have. Three buttons per tile work on touch, with a mouse,
+ * from the keyboard, and with scripting off — and `cover` is a single tap for
+ * the only ordering decision most owners care about.
+ *
+ * The full order is computed here and handed to `reorderPhotos`, which
+ * requires the complete set: a partial reorder leaves the rest at positions
+ * that may now collide, and the service is right to refuse it.
+ */
+export async function movePhotoAction(
+  req: Request, listingId: string, photoId: string, app: App,
+): Promise<Response> {
+  const back = `/dashboard/listings/${listingId}/edit`;
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    const dir = fields.get('dir');
+    if (dir !== 'up' && dir !== 'down' && dir !== 'cover') {
+      throw new FormError('Unknown move.');
+    }
+
+    // Read through the same visibility-checked call every other route uses.
+    const listing = await app.listings.get(listingId, {
+      userId: viewer!.userId, role: viewer!.role,
+    });
+    if (!listing.isOwner) throw new FormError('Not found.', 404);
+
+    const ids = listing.photos.map((p) => p.id);
+    const at = ids.indexOf(photoId);
+    if (at === -1) throw new FormError('Photo not found.', 404);
+
+    const next = reorder(ids, at, dir);
+    // A move that changes nothing — "earlier" on the first photo — is not an
+    // error worth a red message. Nothing happened, and saying so is enough.
+    if (next === null) return redirectTo(back);
+
+    await app.listings.reorderPhotos(listingId, viewer!.userId, next);
+    return redirectTo(back, {
+      notice: dir === 'cover' ? 'That is now the cover photo.' : 'Photo order saved.',
+    });
+  } catch (err) {
+    return fail(back, err);
+  }
+}
+
+/** The new order, or null when the move is a no-op. Pure, so it is testable. */
+export function reorder(
+  ids: readonly string[], at: number, dir: 'up' | 'down' | 'cover',
+): string[] | null {
+  const id = ids[at];
+  if (id === undefined) return null;
+
+  if (dir === 'cover') {
+    if (at === 0) return null;
+    // Lifted to the front, with everything else keeping its relative order —
+    // not swapped with the current cover, which would demote a photo the
+    // owner deliberately put second.
+    return [id, ...ids.filter((_, i) => i !== at)];
+  }
+
+  const to = dir === 'up' ? at - 1 : at + 1;
+  if (to < 0 || to >= ids.length) return null;
+  const out = [...ids];
+  out[at] = out[to]!;
+  out[to] = id;
+  return out;
+}
+
 /** POST /dashboard/listings/:id/photos/:photoId/remove */
 export async function removePhotoAction(
   req: Request, listingId: string, photoId: string, app: App,

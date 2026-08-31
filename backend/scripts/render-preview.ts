@@ -24,7 +24,9 @@ import {
   queuePage, listingReviewPage, messageReviewPage, flagsPage,
 } from '../src/web/pages-admin.js';
 import { editListingPage } from '../src/web/pages-edit.js';
-import { AMENITIES, PROPERTY_TYPES, ROOM_TYPES } from '../src/modules/listings/policy.js';
+import {
+  AMENITIES, AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES,
+} from '../src/modules/listings/policy.js';
 import { FLAG_KEYS, FLAGS, defaultStateOf } from '../src/modules/flags/registry.js';
 import type { SearchResultCard } from '../src/modules/search/service.js';
 import type { ListingView } from '../src/modules/listings/service.js';
@@ -188,7 +190,7 @@ const PAGES: Array<[string, string]> = [
       descriptionSource: 'ai_generated', descriptionAttested: false,
       photos: [], actions: ['submit'],
     },
-    amenities: AMENITIES, roomTypes: ROOM_TYPES,
+    amenityGroups: AMENITY_GROUPS, roomTypes: ROOM_TYPES,
     aiEnabled: true, uploadsConfigured: true,
   })],
   ['listing-edit', editListingPage({
@@ -199,7 +201,7 @@ const PAGES: Array<[string, string]> = [
         photo('a', 0), photo('b', 1), photo('c', 2), photo('d', 3),
       ],
     },
-    amenities: AMENITIES, roomTypes: ROOM_TYPES,
+    amenityGroups: AMENITY_GROUPS, roomTypes: ROOM_TYPES,
     aiEnabled: false, uploadsConfigured: true,
     notice: 'Saved.',
   })],
@@ -210,7 +212,7 @@ const PAGES: Array<[string, string]> = [
       ...LISTING, id: 'draft-2', status: 'draft', isOwner: true,
       description: null, descriptionSource: 'human', photos: [], actions: ['submit'],
     },
-    amenities: AMENITIES, roomTypes: ROOM_TYPES,
+    amenityGroups: AMENITY_GROUPS, roomTypes: ROOM_TYPES,
     aiEnabled: true, uploadsConfigured: true,
     error: 'The draft was not used — it said things your listing does not support.',
     draftProblems: [
@@ -226,7 +228,7 @@ const PAGES: Array<[string, string]> = [
   ['listing-edit-hostile', editListingPage({
     viewer: OWNER,
     listing: { ...HOSTILE, isOwner: true, photos: [photo('x', 0)], actions: ['submit'] },
-    amenities: AMENITIES, roomTypes: ROOM_TYPES,
+    amenityGroups: AMENITY_GROUPS, roomTypes: ROOM_TYPES,
     aiEnabled: true, uploadsConfigured: true,
   })],
 

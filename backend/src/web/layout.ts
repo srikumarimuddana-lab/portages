@@ -192,11 +192,129 @@ label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-2); 
 footer.site-foot { border-top: 1px solid var(--line); margin-top: 40px; padding: 26px 0;
   color: var(--muted); font-size: 13px; }
 
+/* icons */
+.ico { width: 20px; height: 20px; flex: none; vertical-align: -4px; }
+.ico-sm { width: 16px; height: 16px; }
+
+/* ── the amenity picker ───────────────────────────────────────────────────
+   Toggles are CSS-only. The checkbox is the state; the tile is its label.
+   That is what makes this work with scripting off, keeps it keyboard
+   operable for free, and means the form posts exactly what a plain list of
+   checkboxes would. The script on top only filters and counts. */
+.amen-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 12px; }
+.amen-count { display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; }
+.amen-count[data-n="0"] { background: var(--surface); color: var(--muted); }
+.amen-find { position: relative; margin-left: auto; }
+.amen-find .ico { position: absolute; left: 9px; top: 8px; color: var(--muted-2); }
+.amen-find input { padding-left: 32px; width: 190px; font-size: 14px; }
+
+.amen-group + .amen-group { margin-top: 16px; }
+.amen-group h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); margin: 0; font-weight: 700; }
+.amen-grid { display: grid; gap: 8px; padding-top: 7px;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+
+.amen { position: relative; display: block; margin: 0; font-weight: 400; }
+/* Off-screen rather than display:none — a hidden input is not focusable, and
+   an unfocusable checkbox cannot be reached by keyboard or announced. */
+.amen input { position: absolute; width: 1px; height: 1px; opacity: 0;
+  margin: 0; pointer-events: none; }
+.amen-tile { display: flex; align-items: center; gap: 9px; min-height: 46px;
+  padding: 9px 11px; border: 1px solid var(--line-2); border-radius: 10px;
+  background: var(--bg); color: var(--ink-2); font-size: 13.5px; line-height: 1.25;
+  cursor: pointer; user-select: none; }
+.amen-tile .ico { color: var(--muted); }
+.amen:hover .amen-tile { border-color: var(--muted-2); }
+.amen input:checked + .amen-tile { border-color: var(--accent-2); background: var(--tint);
+  color: var(--accent); font-weight: 600; }
+.amen input:checked + .amen-tile .ico { color: var(--accent-2); }
+/* :focus-visible, not :focus — a mouse click on a label focuses the input and
+   would otherwise leave a ring behind on every tile the owner touched. */
+.amen input:focus-visible + .amen-tile { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.amen-tick { position: absolute; top: -6px; right: -6px; width: 19px; height: 19px;
+  border-radius: 999px; background: var(--accent); color: #fff; display: none;
+  align-items: center; justify-content: center; }
+.amen-tick .ico { width: 12px; height: 12px; color: #fff; }
+.amen input:checked ~ .amen-tick { display: flex; }
+.amen[hidden] { display: none; }
+.amen-group[hidden] { display: none; }
+
+/* ── the photo grid ───────────────────────────────────────────────────────
+   Ordering is done with buttons, not drag. HTML5 drag-and-drop does not fire
+   on touch at all, and a phone is where these photos are taken. */
+.photos { display: grid; gap: 12px; margin: 14px 0;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.shot { position: relative; border: 1px solid var(--line); border-radius: 10px;
+  overflow: hidden; background: var(--surface); aspect-ratio: 4/3; }
+.shot img { width: 100%; height: 100%; object-fit: cover; }
+.shot.is-cover { border-color: var(--accent-2); box-shadow: 0 0 0 2px var(--tint); }
+.shot-tag { position: absolute; top: 7px; left: 7px; display: inline-flex;
+  align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px;
+  background: rgba(255,255,255,.94); color: var(--accent); font-size: 11.5px;
+  font-weight: 700; }
+.shot-tag .ico { width: 13px; height: 13px; }
+/* Always visible, never hover-only: on a touch screen there is no hover, and
+   a control that only appears on hover is a control a phone does not have. */
+.shot-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 4px;
+  padding: 6px; background: linear-gradient(to top, rgba(12,16,24,.72), rgba(12,16,24,0));
+  /* A safety net, not the layout: the sizes below are chosen so four buttons
+     fit the narrowest tile the grid can produce. If a future control makes
+     that false, they wrap onto a second row rather than sitting outside the
+     photo where they cannot be tapped. */
+  flex-wrap: wrap; }
+.shot-bar form { display: contents; }
+.shot-btn { display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 8px; border: 0; cursor: pointer;
+  background: rgba(255,255,255,.92); color: var(--ink-2); padding: 0; }
+.shot-btn:hover { background: #fff; color: var(--accent); }
+.shot-btn[disabled] { opacity: .35; cursor: default; }
+.shot-btn-danger:hover { color: #9c2c1a; }
+.shot-btn .ico { width: 17px; height: 17px; }
+.shot-spacer { flex: 1; }
+
+/* an upload in flight, before the bytes have landed */
+.shot-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+  background: rgba(255,255,255,.5); }
+.shot-progress i { display: block; height: 100%; width: 0; background: var(--accent-2);
+  transition: width .25s ease; }
+.shot.is-pending img { opacity: .55; }
+.shot-err { position: absolute; inset: 0; display: grid; place-items: center;
+  padding: 10px; text-align: center; background: rgba(253,236,233,.95);
+  color: #9c2c1a; font-size: 12px; }
+
+/* ── the drop zone ────────────────────────────────────────────────────── */
+.drop { border: 2px dashed var(--line-2); border-radius: 12px; padding: 22px 18px;
+  text-align: center; color: var(--muted); background: var(--bg); }
+.drop.is-over { border-color: var(--accent-2); background: var(--tint); }
+.drop .ico { width: 26px; height: 26px; color: var(--muted-2); margin-bottom: 6px; }
+.drop.is-over .ico { color: var(--accent-2); }
+.drop strong { display: block; color: var(--ink); font-size: 15px; margin-bottom: 3px; }
+/* The input is the fallback control when there is no script, and the button
+   below is the enhanced one — only ever one of them is visible. */
+.drop input[type=file] { width: auto; margin: 0 auto; }
+
 @media (max-width: 860px) {
   .detail { grid-template-columns: 1fr; }
   .aside { position: static; }
   .hero h1 { font-size: 27px; }
   .site nav { gap: 12px; }
+}
+@media (max-width: 560px) {
+  /* Two amenity tiles across on a phone, and a search box that is not
+     competing with the heading for the same line. */
+  .amen-grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 7px; }
+  .amen-find { margin-left: 0; width: 100%; }
+  .amen-find input { width: 100%; }
+  /* 140px is not arbitrary: it is the narrowest tile that still holds four
+     30px controls with their gaps and padding. Below the width where two of
+     those fit, auto-fill drops to one column rather than squeezing them. */
+  .photos { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .shot-bar { gap: 3px; padding: 5px; }
+  .shot-btn { width: 30px; height: 30px; }
+  .shot-btn .ico { width: 16px; height: 16px; }
 }
 `;
 

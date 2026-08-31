@@ -14,7 +14,9 @@ import {
   queuePage, listingReviewPage, messageReviewPage, flagsPage,
 } from './pages-admin.js';
 import { editListingPage } from './pages-edit.js';
-import { AMENITIES, PROPERTY_TYPES, ROOM_TYPES } from '../modules/listings/policy.js';
+import {
+  AMENITIES, AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES,
+} from '../modules/listings/policy.js';
 import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
 import { contentSecurityPolicy, uploadOriginOf } from './headers.js';
 import { flashOf } from './form.js';
@@ -136,7 +138,7 @@ export async function editListingRoute(req: Request, id: string, app: App): Prom
     return respond(app, editListingPage({
       viewer,
       listing,
-      amenities: AMENITIES,
+      amenityGroups: AMENITY_GROUPS,
       roomTypes: listing.mode === 'rent' ? ROOM_TYPES : [],
       aiEnabled,
       // The uploader is hidden rather than shown-and-broken when there is

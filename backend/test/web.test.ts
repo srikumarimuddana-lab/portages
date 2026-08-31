@@ -23,7 +23,10 @@ import {
 import { homePage, searchPage, listingPage, signInPage } from '../src/web/pages.js';
 import { editListingPage } from '../src/web/pages-edit.js';
 import { contentSecurityPolicy, uploadOriginOf } from '../src/web/headers.js';
-import { AMENITIES, ROOM_TYPES, MAX_PHOTOS } from '../src/modules/listings/policy.js';
+import { hasIcon } from '../src/web/icons.js';
+import {
+  AMENITIES, AMENITY_GROUPS, ROOM_TYPES, MAX_PHOTOS,
+} from '../src/modules/listings/policy.js';
 import type { SearchResultCard } from '../src/modules/search/service.js';
 import type { ListingView } from '../src/modules/listings/service.js';
 
@@ -815,7 +818,7 @@ function edit(over: Partial<Parameters<typeof editListingPage>[0]> = {}): string
   return editListingPage({
     viewer: { userId: 'o', role: 'user', csrfToken: 'tok' },
     listing: EDIT_LISTING,
-    amenities: AMENITIES,
+    amenityGroups: AMENITY_GROUPS,
     roomTypes: ROOM_TYPES,
     aiEnabled: false,
     uploadsConfigured: true,
@@ -936,15 +939,21 @@ test('a hostile listing is still text on the edit page, in inputs and all', () =
   // back into `value=` attributes and into a <textarea>.
   const out = edit({ listing: { ...HOSTILE_LISTING, isOwner: true, photos: [] } });
 
+  // Our own inline scripts are removed before the tag checks. They are static
+  // strings this file wrote, they contain markup as JS text on purpose (the
+  // uploader builds a tile), and the claim under test is about INTERPOLATED
+  // values reaching markup — not about what our own code says.
+  const markup = out.replace(/<script>[\s\S]*?<\/script>/g, '');
+
   // What matters is that no TAG got through. The characters `onerror=alert(2)`
   // survive as text and are meant to: with the surrounding < and > escaped
   // they are letters in a textarea, not an attribute. Asserting on the
   // substring instead would fail on correct output, which is how a test ends
   // up being weakened until it checks nothing.
   assert.equal(foreignScripts(out).length, 0);
-  assert.ok(!out.includes('<img'), 'no photos, so no img tag may exist');
-  assert.ok(!out.includes('<iframe'));
-  assert.ok(!out.includes('<h1>injected'));
+  assert.ok(!markup.includes('<img'), 'no photos, so no img tag may exist');
+  assert.ok(!markup.includes('<iframe'));
+  assert.ok(!markup.includes('<h1>injected'));
 
   // And the same text IS present, escaped — otherwise this would pass by
   // rendering nothing at all.
@@ -1032,3 +1041,171 @@ test('room type is offered on a rental and absent on a sale', () => {
   const sale = edit({ listing: { ...EDIT_LISTING, mode: 'sale' }, roomTypes: [] });
   assert.ok(!sale.includes('name="roomType"'));
 });
+
+// ── icons ───────────────────────────────────────────────────────────────────
+
+test('every icon a page references is defined in the sprite', () => {
+  // The silent failure this catches: <use href="#i-typo"> renders NOTHING.
+  // No error, no console message, no broken-image glyph — just a tile with a
+  // gap where its icon should be, on one amenity out of forty-two.
+  const out = edit();
+  const defined = new Set([...out.matchAll(/<symbol id="i-([a-zA-Z]+)"/g)].map((m) => m[1]!));
+  const used = new Set([...out.matchAll(/<use href="#i-([a-zA-Z]+)"/g)].map((m) => m[1]!));
+
+  const missing = [...used].filter((n) => !defined.has(n));
+  assert.deepEqual(missing, [], `icons used but not defined: ${missing.join(', ')}`);
+  assert.ok(used.size >= 10, `expected the page to use many icons, saw ${used.size}`);
+});
+
+test('the sprite is emitted once, not once per icon', () => {
+  // <use> is the point: forty-two inline copies of the same path would be
+  // most of the page weight.
+  const out = edit();
+  assert.equal((out.match(/<symbol id="i-car"/g) ?? []).length, 1);
+});
+
+test('every amenity group icon exists, and every amenity is in exactly one group', () => {
+  // Both failures are invisible at a glance. A bad icon name renders an empty
+  // box; an amenity left out of the groups simply cannot be chosen, and the
+  // only symptom is that nobody ever ticks it.
+  const seen = new Map<string, number>();
+  for (const g of AMENITY_GROUPS) {
+    for (const item of g.items) {
+      assert.ok(hasIcon(item.icon), `${item.key}: no icon named ${item.icon}`);
+      seen.set(item.key, (seen.get(item.key) ?? 0) + 1);
+    }
+  }
+
+  const missing = AMENITIES.filter((a) => !seen.has(a));
+  assert.deepEqual(missing, [], `amenities with no group, so unpickable: ${missing.join(', ')}`);
+
+  const twice = [...seen].filter(([, n]) => n > 1).map(([k]) => k);
+  assert.deepEqual(twice, [], `amenities in more than one group: ${twice.join(', ')}`);
+
+  const unknown = [...seen.keys()].filter((k) => !AMENITIES.includes(k as never));
+  assert.deepEqual(unknown, [], `groups name amenities the allowlist rejects: ${unknown.join(', ')}`);
+});
+
+// ── the amenity picker ──────────────────────────────────────────────────────
+
+test('the picker posts what a plain checkbox list posted', () => {
+  // The whole design rests on this. The tiles are styling over real
+  // checkboxes, so the form data is unchanged and nothing about submitting
+  // depends on a script having run.
+  const out = edit({
+    listing: { ...EDIT_LISTING, amenities: ['parking', 'heated_garage'] },
+  });
+
+  for (const a of AMENITIES) {
+    assert.ok(
+      out.includes(`name="amenities" value="${a}"`),
+      `${a} should be offered as a checkbox`,
+    );
+  }
+  assert.equal((out.match(/type="checkbox" name="amenities"/g) ?? []).length, AMENITIES.length);
+});
+
+test('the picker checks exactly the amenities the listing has', () => {
+  const out = edit({ listing: { ...EDIT_LISTING, amenities: ['parking', 'heated_garage'] } });
+  const checked = [...out.matchAll(/name="amenities" value="(\w+)"\s*\n?\s*checked/g)]
+    .map((m) => m[1]!);
+  assert.deepEqual(checked.sort(), ['heated_garage', 'parking']);
+});
+
+test('toggling needs no script: no inline handler appears on a tile', () => {
+  // `input:checked + .amen-tile` does the styling. An onclick here would mean
+  // the picker silently stops working when the script fails.
+  const out = edit();
+  const picker = out.slice(out.indexOf('data-amenities'), out.indexOf('</fieldset>'));
+  assert.ok(!/\son[a-z]+=/.test(picker), 'a tile carries an inline event handler');
+});
+
+test('the checkbox is off-screen, not display:none, so it stays focusable', () => {
+  // display:none removes an element from the tab order. A checkbox that
+  // cannot be focused cannot be reached or announced, which would make the
+  // whole picker unusable from a keyboard or a screen reader.
+  const css = page({ title: 'x' }, html`y`);
+  assert.match(css, /\.amen input \{[^}]*position: absolute/);
+  assert.ok(!/\.amen input \{[^}]*display: none/.test(css));
+});
+
+test('the amenity filter box is hidden until the script reveals it', () => {
+  // A search box that filters nothing is worse than no search box.
+  const out = edit();
+  assert.match(out, /class="amen-find" data-find hidden/);
+});
+
+// ── the photo controls ──────────────────────────────────────────────────────
+
+test('every photo carries ordering controls that are plain form posts', () => {
+  const out = edit({ listing: { ...EDIT_LISTING, photos: [shot('a', 0), shot('b', 1)] } });
+  // Two moves per photo, plus a cover button on every photo but the first.
+  assert.equal((out.match(/\/photos\/[ab]\/move"/g) ?? []).length, 5);
+  assert.equal((out.match(/\/photos\/[ab]\/remove"/g) ?? []).length, 2);
+  assert.ok(!out.includes('draggable'), 'drag does not fire on touch; this page uses buttons');
+});
+
+test('the first photo is the cover, and cannot be moved earlier or re-covered', () => {
+  const [first, second] = tiles(edit({
+    listing: { ...EDIT_LISTING, photos: [shot('a', 0), shot('b', 1)] },
+  }));
+
+  assert.match(first!, /shot-tag/, 'the cover should be labelled');
+  assert.match(first!, /is-cover/);
+  assert.match(first!, /disabled/, 'the cover cannot move earlier');
+  assert.ok(!first!.includes('value="cover"'), 'the cover cannot be made the cover');
+
+  assert.ok(!second!.includes('shot-tag'), 'only one photo is the cover');
+  assert.match(second!, /value="cover"/, 'any other photo can become it');
+});
+
+test('the first cannot move earlier and the last cannot move later', () => {
+  // Counted inside the tiles, not across the page: `disabled` also appears in
+  // the stylesheet and in the uploader script, and a whole-document count
+  // would pass whatever the buttons did.
+  const [first, second] = tiles(edit({
+    listing: { ...EDIT_LISTING, photos: [shot('a', 0), shot('b', 1)] },
+  }));
+  assert.equal((first!.match(/disabled/g) ?? []).length, 1);
+  assert.equal((second!.match(/disabled/g) ?? []).length, 1);
+
+  // The middle one of three has both moves available.
+  const three = tiles(edit({
+    listing: { ...EDIT_LISTING, photos: [shot('a', 0), shot('b', 1), shot('c', 2)] },
+  }));
+  assert.equal((three[1]!.match(/disabled/g) ?? []).length, 0);
+});
+
+/**
+ * The photo tiles, one string each.
+ *
+ * Split on the complete opening tag, not the `<div class="shot` prefix — that
+ * prefix also matches `<div class="shot-bar">`, which cuts every tile in half
+ * at exactly the point where its buttons start, and leaves the assertions
+ * below inspecting a picture and nothing else.
+ */
+function tiles(out: string): string[] {
+  const grid = out.slice(out.indexOf('data-shots'), out.indexOf('id="uploader"'));
+  // A lookahead, so the opening tag stays at the head of each tile — the
+  // `is-cover` class lives in that tag, and a plain split would eat it.
+  return grid
+    .split(/(?=<div class="shot(?: is-cover)?">)/)
+    .filter((t) => t.startsWith('<div class="shot'));
+}
+
+test('an icon-only control carries a label, since there is no text to read', () => {
+  const out = edit({ listing: { ...EDIT_LISTING, photos: [shot('a', 0), shot('b', 1)] } });
+  const buttons = [...out.matchAll(/<button class="shot-btn[^>]*>/g)].map((m) => m[0]);
+  assert.ok(buttons.length >= 6, `expected several icon buttons, saw ${buttons.length}`);
+  for (const btn of buttons) assert.match(btn, /aria-label="/);
+  // And every icon is hidden from the reader, or a labelled button would be
+  // announced twice — once for the label and once for the graphic.
+  const icons = [...out.matchAll(/<svg class="ico[^"]*"[^>]*>/g)].map((m) => m[0]);
+  assert.ok(icons.length >= 20, `expected many icons, saw ${icons.length}`);
+  for (const i of icons) assert.match(i, /aria-hidden="true"/);
+});
+
+function shot(id: string, position: number) {
+  return { id, storageKey: `listings/x/${id}`, kind: 'photo',
+           mime: 'image/jpeg', bytes: 1000, position };
+}

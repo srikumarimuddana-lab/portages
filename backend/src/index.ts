@@ -51,7 +51,7 @@ import {
 import {
   signInAction, signUpAction, signOutAction,
   createListingAction, updateListingAction, transitionListingAction,
-  attestListingAction, removePhotoAction, draftDescriptionAction,
+  attestListingAction, removePhotoAction, movePhotoAction, draftDescriptionAction,
   enquireAction, replyAction, blockThreadAction, reportAction,
   decideListingAction, decideMessageAction, dismissQueueAction, setFlagAction,
 } from './web/actions.js';
@@ -190,6 +190,8 @@ async function buildRoutes(): Promise<void> {
     (req, p) => draftDescriptionAction(req, p['id']!, app));
   route('POST', '/dashboard/listings/:id/photos/:photoId/remove',
     (req, p) => removePhotoAction(req, p['id']!, p['photoId']!, app));
+  route('POST', '/dashboard/listings/:id/photos/:photoId/move',
+    (req, p) => movePhotoAction(req, p['id']!, p['photoId']!, app));
 
   route('POST', '/listings/:id/enquire', (req, p) => enquireAction(req, p['id']!, app));
   route('POST', '/messages/:id/reply', (req, p) => replyAction(req, p['id']!, app));

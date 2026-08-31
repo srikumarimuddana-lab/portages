@@ -44,6 +44,121 @@ export const AMENITIES = [
 ] as const;
 export type Amenity = (typeof AMENITIES)[number];
 
+/**
+ * The same amenities, grouped and iconed for the picker.
+ *
+ * The groups already existed as comments above `AMENITIES`; this makes them
+ * data, because a flat list of forty-two checkboxes is not a form an owner
+ * fills in — it is a wall they skim, and the things they skip are the winter
+ * ones a Regina renter filters on hardest.
+ *
+ * The order within a group is deliberate: the common case first, the specific
+ * case second. `parking` before `heated_garage` before `block_heater_plug`.
+ *
+ * `icon` names must exist in the sprite; a test asserts every one of them
+ * does, and that every amenity appears in exactly one group. Both would
+ * otherwise fail silently — a typo renders an empty box, and an amenity left
+ * out of the groups simply cannot be chosen.
+ */
+export interface AmenityGroup {
+  key: string;
+  label: string;
+  items: ReadonlyArray<{ key: Amenity; label: string; icon: string }>;
+}
+
+export const AMENITY_GROUPS: readonly AmenityGroup[] = [
+  {
+    key: 'parking',
+    label: 'Parking and winter',
+    items: [
+      { key: 'parking', label: 'Parking', icon: 'car' },
+      { key: 'garage', label: 'Garage', icon: 'garage' },
+      { key: 'heated_garage', label: 'Heated garage', icon: 'flame' },
+      { key: 'block_heater_plug', label: 'Block heater plug', icon: 'plug' },
+      { key: 'ev_charger', label: 'EV charger', icon: 'bolt' },
+    ],
+  },
+  {
+    key: 'laundry',
+    label: 'Laundry',
+    items: [
+      { key: 'in_suite_laundry', label: 'In-suite laundry', icon: 'washer' },
+      { key: 'shared_laundry', label: 'Shared laundry', icon: 'washer' },
+      { key: 'laundry_hookups', label: 'Laundry hookups', icon: 'plug' },
+    ],
+  },
+  {
+    key: 'climate',
+    label: 'Heating and cooling',
+    items: [
+      { key: 'air_conditioning', label: 'Air conditioning', icon: 'snow' },
+      { key: 'central_heating', label: 'Central heating', icon: 'thermometer' },
+      { key: 'fireplace', label: 'Fireplace', icon: 'flame' },
+    ],
+  },
+  {
+    key: 'outdoor',
+    label: 'Outdoor',
+    items: [
+      { key: 'balcony', label: 'Balcony', icon: 'balcony' },
+      { key: 'patio', label: 'Patio', icon: 'deck' },
+      { key: 'deck', label: 'Deck', icon: 'deck' },
+      { key: 'yard', label: 'Yard', icon: 'tree' },
+      { key: 'fenced_yard', label: 'Fenced yard', icon: 'fence' },
+    ],
+  },
+  {
+    key: 'building',
+    label: 'Building',
+    items: [
+      { key: 'elevator', label: 'Elevator', icon: 'elevator' },
+      { key: 'wheelchair_accessible', label: 'Step-free access', icon: 'accessible' },
+      { key: 'security_system', label: 'Security system', icon: 'shield' },
+      { key: 'concierge', label: 'Concierge', icon: 'bell' },
+      { key: 'bike_storage', label: 'Bike storage', icon: 'bike' },
+      { key: 'storage_locker', label: 'Storage locker', icon: 'box' },
+      { key: 'gym', label: 'Gym', icon: 'dumbbell' },
+      { key: 'pool', label: 'Pool', icon: 'waves' },
+      { key: 'hot_tub', label: 'Hot tub', icon: 'waves' },
+      { key: 'sauna', label: 'Sauna', icon: 'flame' },
+    ],
+  },
+  {
+    key: 'interior',
+    label: 'Inside',
+    items: [
+      { key: 'dishwasher', label: 'Dishwasher', icon: 'dish' },
+      { key: 'furnished', label: 'Furnished', icon: 'sofa' },
+      { key: 'ensuite_bathroom', label: 'Ensuite bathroom', icon: 'bath' },
+      { key: 'walk_in_closet', label: 'Walk-in closet', icon: 'hanger' },
+      { key: 'basement', label: 'Basement', icon: 'stairs' },
+      { key: 'finished_basement', label: 'Finished basement', icon: 'stairs' },
+      { key: 'central_vac', label: 'Central vac', icon: 'box' },
+    ],
+  },
+  {
+    key: 'rules',
+    label: 'Pets and smoking',
+    items: [
+      { key: 'pets_allowed', label: 'Pets allowed', icon: 'paw' },
+      { key: 'cats_allowed', label: 'Cats allowed', icon: 'paw' },
+      { key: 'dogs_allowed', label: 'Dogs allowed', icon: 'paw' },
+      { key: 'smoking_allowed', label: 'Smoking allowed', icon: 'smoke' },
+    ],
+  },
+  {
+    key: 'included',
+    label: 'Included in the rent',
+    items: [
+      { key: 'utilities_included', label: 'Utilities', icon: 'bulb' },
+      { key: 'heat_included', label: 'Heat', icon: 'thermometer' },
+      { key: 'water_included', label: 'Water', icon: 'droplet' },
+      { key: 'electricity_included', label: 'Electricity', icon: 'bolt' },
+      { key: 'internet_included', label: 'Internet', icon: 'wifi' },
+    ],
+  },
+];
+
 const AMENITY_SET: ReadonlySet<string> = new Set(AMENITIES);
 
 export const PROPERTY_TYPES = [

@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import {
   updateListingAction, attestListingAction, removePhotoAction,
-  draftDescriptionAction, transitionListingAction,
+  draftDescriptionAction, transitionListingAction, movePhotoAction,
 } from '../src/web/actions.js';
 import { CSRF_COOKIE, SESSION_COOKIE, createSessionMaterial } from '../src/lib/session.js';
 import type { UpdateListingInput } from '../src/modules/listings/service.js';
@@ -33,6 +33,7 @@ interface Calls {
   removePhoto: Array<{ listingId: string; ownerId: string; photoId: string }>;
   drafted: number;
   transition: Array<{ action: string }>;
+  reorder: Array<{ listingId: string; ownerId: string; ids: readonly string[] }>;
 }
 
 function harness(over: {
@@ -42,8 +43,11 @@ function harness(over: {
   draft?: { title: string; description: string } | null;
   problems?: Array<{ kind: 'unbacked_amenity' | 'unknowable_claim'; subject: string; phrase: string }>;
   updateThrows?: unknown;
+  photos?: Array<{ id: string }>;
 } = {}) {
-  const calls: Calls = { update: [], attest: [], removePhoto: [], drafted: 0, transition: [] };
+  const calls: Calls = {
+    update: [], attest: [], removePhoto: [], drafted: 0, transition: [], reorder: [],
+  };
 
   const app = {
     cfg: { allowedOrigins: ['https://portage.ca'] },
@@ -76,8 +80,12 @@ function harness(over: {
           id: LISTING, mode: 'rent', propertyType: 'apartment', roomType: 'entire',
           priceCents: 150_000, beds: 2, baths: 1, sqft: 820,
           amenities: ['parking'], address: { city: 'Regina' },
+          photos: over.photos ?? [],
           isOwner: over.isOwner ?? true,
         };
+      },
+      async reorderPhotos(listingId: string, ownerId: string, ids: readonly string[]) {
+        calls.reorder.push({ listingId, ownerId, ids: [...ids] });
       },
       async update(listingId: string, ownerId: string, patch: UpdateListingInput) {
         if (over.updateThrows) throw over.updateThrows;
@@ -392,4 +400,99 @@ test('a new draft lands on its own edit page, where photos are added', async () 
   );
   assert.equal(flash(res).path, '/dashboard/listings/new-1/edit');
   assert.match(flash(res).notice!, /Add photos/);
+});
+
+// ── reordering photos ───────────────────────────────────────────────────────
+
+test('reorder: cover lifts to the front and keeps everyone else in order', async () => {
+  // Lifted, not swapped. Swapping with the current cover would demote a photo
+  // the owner deliberately put second, which is a change they did not ask for.
+  const { reorder } = await import('../src/web/actions.js');
+  assert.deepEqual(reorder(['a', 'b', 'c', 'd'], 2, 'cover'), ['c', 'a', 'b', 'd']);
+  assert.deepEqual(reorder(['a', 'b', 'c'], 1, 'cover'), ['b', 'a', 'c']);
+});
+
+test('reorder: up and down swap with the neighbour', async () => {
+  const { reorder } = await import('../src/web/actions.js');
+  assert.deepEqual(reorder(['a', 'b', 'c'], 1, 'up'), ['b', 'a', 'c']);
+  assert.deepEqual(reorder(['a', 'b', 'c'], 1, 'down'), ['a', 'c', 'b']);
+});
+
+test('reorder: a move that changes nothing returns null, not a no-op array', async () => {
+  // The distinction matters upstream: null means do not touch the database,
+  // which is why "earlier" on the first photo does not write a row or claim
+  // that an order was saved.
+  const { reorder } = await import('../src/web/actions.js');
+  assert.equal(reorder(['a', 'b'], 0, 'up'), null);
+  assert.equal(reorder(['a', 'b'], 1, 'down'), null);
+  assert.equal(reorder(['a', 'b'], 0, 'cover'), null);
+  assert.equal(reorder(['a', 'b'], 9, 'up'), null, 'an index off the end is not a crash');
+});
+
+test('reorder: every result is a permutation, never a lost or duplicated photo', async () => {
+  // reorderPhotos requires the COMPLETE set exactly once and refuses anything
+  // else — correctly, since a partial order leaves the rest at positions that
+  // may now collide. A bug here would surface as a service error the owner
+  // cannot act on, so it is checked exhaustively instead.
+  const { reorder } = await import('../src/web/actions.js');
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  for (const dir of ['up', 'down', 'cover'] as const) {
+    for (let at = 0; at < ids.length; at++) {
+      const out = reorder(ids, at, dir);
+      if (out === null) continue;
+      assert.deepEqual([...out].sort(), [...ids].sort(), `${dir} at ${at} is not a permutation`);
+      assert.equal(new Set(out).size, ids.length, `${dir} at ${at} duplicated a photo`);
+    }
+  }
+});
+
+test('moving a photo sends the complete new order, which is what the service demands', async () => {
+  const { app, calls } = harness({
+    photos: [{ id: 'p1' }, { id: 'p2' }, { id: 'p3' }],
+  });
+  const res = await movePhotoAction(
+    post(`/dashboard/listings/${LISTING}/photos/p3/move`, 'dir=cover'), LISTING, 'p3', app,
+  );
+
+  assert.deepEqual(calls.reorder, [{
+    listingId: LISTING, ownerId: OWNER, ids: ['p3', 'p1', 'p2'],
+  }]);
+  assert.match(flash(res).notice!, /cover photo/);
+});
+
+test('a move that changes nothing writes nothing and says nothing', async () => {
+  const { app, calls } = harness({ photos: [{ id: 'p1' }, { id: 'p2' }] });
+  const res = await movePhotoAction(
+    post(`/dashboard/listings/${LISTING}/photos/p1/move`, 'dir=up'), LISTING, 'p1', app,
+  );
+  assert.equal(calls.reorder.length, 0);
+  assert.equal(flash(res).notice, null, 'nothing happened, so there is nothing to announce');
+  assert.equal(flash(res).error, null, 'and it is not an error either');
+});
+
+test('an unknown direction is refused rather than guessed at', async () => {
+  const { app, calls } = harness({ photos: [{ id: 'p1' }, { id: 'p2' }] });
+  const res = await movePhotoAction(
+    post(`/dashboard/listings/${LISTING}/photos/p1/move`, 'dir=sideways'), LISTING, 'p1', app,
+  );
+  assert.equal(calls.reorder.length, 0);
+  assert.match(flash(res).error!, /Unknown move/);
+});
+
+test('moving a photo on a listing you do not own is a 404', async () => {
+  const { app, calls } = harness({ isOwner: false, photos: [{ id: 'p1' }, { id: 'p2' }] });
+  const res = await movePhotoAction(
+    post(`/dashboard/listings/${LISTING}/photos/p2/move`, 'dir=cover'), LISTING, 'p2', app,
+  );
+  assert.equal(calls.reorder.length, 0);
+  assert.equal(flash(res).error, 'Not found.');
+});
+
+test('moving a photo that is not on the listing is a 404, not a crash', async () => {
+  const { app, calls } = harness({ photos: [{ id: 'p1' }] });
+  const res = await movePhotoAction(
+    post(`/dashboard/listings/${LISTING}/photos/nope/move`, 'dir=cover'), LISTING, 'nope', app,
+  );
+  assert.equal(calls.reorder.length, 0);
+  assert.equal(flash(res).error, 'Photo not found.');
 });

@@ -26,7 +26,9 @@
  */
 import { html, raw, type Html } from './html.js';
 import { page, money, csrfField, type Flash, type Viewer } from './layout.js';
+import { icon, iconSprite, hasIcon, type IconName } from './icons.js';
 import { MAX_PHOTOS } from '../modules/listings/policy.js';
+import type { AmenityGroup } from '../modules/listings/policy.js';
 import type { ListingView, PhotoView } from '../modules/listings/service.js';
 
 /** Database keys read like database keys; these are what a renter would say. */
@@ -48,7 +50,7 @@ const ACTION_COPY: Record<string, string> = {
 export function editListingPage(opts: Flash & {
   viewer: Viewer;
   listing: ListingView;
-  amenities: readonly string[];
+  amenityGroups: readonly AmenityGroup[];
   roomTypes: readonly string[];
   aiEnabled: boolean;
   /** False when object storage is unconfigured — the uploader cannot work. */
@@ -70,6 +72,7 @@ export function editListingPage(opts: Flash & {
       error: opts.error,
     },
     html`
+${iconSprite()}
 <div class="wrap" style="max-width:760px;padding:26px 20px 60px">
   <p class="small"><a href="/dashboard/listings">← My listings</a></p>
   <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
@@ -163,18 +166,7 @@ export function editListingPage(opts: Flash & {
       </p>
     </div>
 
-    <fieldset style="border:1px solid var(--line);border-radius:8px;padding:14px">
-      <legend class="small" style="font-weight:600;padding:0 6px">Amenities</legend>
-      <div style="display:flex;flex-wrap:wrap;gap:2px">
-        ${opts.amenities.map((a) => html`
-          <label style="display:inline-flex;align-items:center;gap:6px;font-weight:400;
-                        margin:0 12px 6px 0;font-size:13.5px">
-            <input type="checkbox" name="amenities" value="${a}" style="width:auto"
-                   ${has.has(a) ? raw('checked') : null}>
-            ${a.replace(/_/g, ' ')}
-          </label>`)}
-      </div>
-    </fieldset>
+    ${amenityPicker(opts.amenityGroups, has)}
 
     ${/* Editing the copy clears any attestation, which is enforced by
           ListingService.update — an owner cannot attest to a clean draft and
@@ -220,6 +212,117 @@ export function editListingPage(opts: Flash & {
   );
 }
 
+// ── amenities ───────────────────────────────────────────────────────────────
+
+/**
+ * Forty-two amenities, as tiles rather than a list of checkboxes.
+ *
+ * THE THING THAT WAS WRONG. A flat column of forty-two checkboxes is not a
+ * form anyone fills in; it is a wall they skim. What gets skipped is whatever
+ * is furthest down — and on this list that included `heated_garage` and
+ * `block_heater_plug`, which are two of the things a Regina renter filters on
+ * hardest between November and March. An amenity nobody ticks is a listing
+ * that does not appear in the search that would have found it.
+ *
+ * NO SCRIPT IS INVOLVED IN THE TOGGLING. Each tile is a `<label>` wrapping a
+ * real checkbox, and `input:checked + .amen-tile` does the styling. So this
+ * posts exactly what the plain checkbox list posted, works with scripting off,
+ * and is keyboard-operable and screen-reader-correct without any of that being
+ * re-implemented. The script adds a live count and a filter box, and nothing
+ * that the form depends on.
+ */
+function amenityPicker(groups: readonly AmenityGroup[], has: ReadonlySet<string>): Html {
+  const chosen = groups.reduce(
+    (n, g) => n + g.items.filter((i) => has.has(i.key)).length, 0,
+  );
+
+  return html`
+<fieldset class="field" data-amenities
+          style="border:1px solid var(--line);border-radius:10px;padding:14px 14px 16px">
+  <legend class="small" style="font-weight:600;padding:0 6px">Amenities</legend>
+
+  <div class="amen-head">
+    <span class="small muted">
+      Tick everything the property actually has.
+      <span class="amen-count" data-count data-n="${String(chosen)}">${String(chosen)}</span>
+    </span>
+    ${/* Hidden until the script reveals it: a search box that filters nothing
+          is worse than no search box. */ null}
+    <span class="amen-find" data-find hidden>
+      ${icon('search', 'ico-sm')}
+      <input type="search" data-filter placeholder="Find an amenity"
+             aria-label="Filter the amenities below" autocomplete="off">
+    </span>
+  </div>
+
+  ${groups.map((g) => html`
+  <div class="amen-group" data-group>
+    <h4>${g.label}</h4>
+    <div class="amen-grid">
+      ${g.items.map((it) => html`
+      <label class="amen" data-amen="${it.label.toLowerCase()} ${it.key.replace(/_/g, ' ')}">
+        <input type="checkbox" name="amenities" value="${it.key}"
+               ${has.has(it.key) ? raw('checked') : null}>
+        <span class="amen-tile">${icon(iconOf(it.icon))}${it.label}</span>
+        <span class="amen-tick" aria-hidden="true">${icon('check')}</span>
+      </label>`)}
+    </div>
+  </div>`)}
+
+  <script>${raw(AMENITY_SCRIPT)}</script>
+</fieldset>`;
+}
+
+/** Falls back to a generic mark rather than rendering an empty box. */
+function iconOf(name: string): IconName {
+  return hasIcon(name) ? name : 'check';
+}
+
+/**
+ * Counting and filtering. Nothing here is load-bearing.
+ *
+ * If this script fails to run, the tiles still toggle, the form still posts
+ * the same values, and the only things missing are a number and a search box
+ * that was hidden to begin with.
+ */
+const AMENITY_SCRIPT = `
+(function () {
+  var root = document.querySelector('[data-amenities]');
+  if (!root) return;
+  var count = root.querySelector('[data-count]');
+  var find = root.querySelector('[data-find]');
+  var boxes = Array.prototype.slice.call(root.querySelectorAll('input[type=checkbox]'));
+
+  function recount() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    if (!count) return;
+    count.textContent = String(n);
+    count.setAttribute('data-n', String(n));
+  }
+  root.addEventListener('change', recount);
+  recount();
+
+  if (!find) return;
+  find.hidden = false;
+  var input = find.querySelector('[data-filter]');
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    root.querySelectorAll('[data-group]').forEach(function (group) {
+      var shown = 0;
+      group.querySelectorAll('[data-amen]').forEach(function (tile) {
+        // A ticked amenity is never hidden. Filtering something out of view
+        // while it is still being submitted is how an owner ends up unable to
+        // find the thing they need to untick.
+        var keep = !q || tile.getAttribute('data-amen').indexOf(q) !== -1
+          || tile.querySelector('input').checked;
+        tile.hidden = !keep;
+        if (keep) shown++;
+      });
+      group.hidden = shown === 0;
+    });
+  });
+})();`;
+
 function numberField(name: string, label: string, value: number | null): Html {
   return html`
 <div class="field">
@@ -233,16 +336,16 @@ function numberField(name: string, label: string, value: number | null): Html {
 // ── photos ──────────────────────────────────────────────────────────────────
 
 function photoSection(viewer: Viewer, l: ListingView, uploadsConfigured: boolean): Html {
+  const room = MAX_PHOTOS - l.photos.length;
   return html`
 <h2 style="margin-top:28px">Photos</h2>
 <p class="small muted" style="margin-top:-6px">
-  The first one is what people see in search results. Up to ${String(MAX_PHOTOS)}.
+  The first one carries the listing in search results. Up to ${String(MAX_PHOTOS)}.
 </p>
 
 ${l.photos.length > 0
-  ? html`<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
-                                  gap:12px;margin:14px 0">
-           ${l.photos.map((p, i) => photoTile(viewer, l.id, p, i === 0))}
+  ? html`<div class="photos" data-shots>
+           ${l.photos.map((p, i) => photoTile(viewer, l.id, p, i, l.photos.length))}
          </div>`
   : null}
 
@@ -251,25 +354,25 @@ ${!uploadsConfigured
            Photo storage is not configured on this deployment, so photos cannot
            be added here yet.
          </p>`
-  : l.photos.length >= MAX_PHOTOS
+  : room <= 0
     ? html`<p class="small muted">
              This listing has the maximum of ${String(MAX_PHOTOS)} photos. Remove
              one to add another.
            </p>`
     : html`
-<div id="uploader" hidden data-listing="${l.id}"
-     style="border:1px dashed var(--line-2);border-radius:10px;padding:18px;text-align:center">
-  <input type="file" id="photo-input" accept="image/jpeg,image/png,image/webp" multiple
-         style="width:auto">
-  <p class="small muted" style="margin:10px 0 0" id="upload-status">
-    JPEG, PNG or WebP. Large photos are resized before they leave your device.
+<div class="drop" id="uploader" data-listing="${l.id}" data-room="${String(room)}">
+  ${icon('upload')}
+  <strong data-headline>Add photos</strong>
+  <p class="small" style="margin:0 0 10px" data-status>
+    JPEG, PNG or WebP. Large photos are resized on your device before they are sent.
   </p>
+  <input type="file" id="photo-input" accept="image/jpeg,image/png,image/webp" multiple>
 </div>
 
-${/* The no-script fallback is a message, not a broken control. Uploads go
-      straight from the browser to object storage on a presigned PUT — the
-      bytes never touch our server — and that is a three-step exchange no
-      single form can perform. */ null}
+${/* Uploads go straight from the browser to object storage on a presigned
+      PUT — the bytes never touch our server — and that is a three-step
+      exchange no single form can perform. The fallback is a sentence, not a
+      control that silently does nothing. */ null}
 <noscript>
   <p class="notice notice-warn">
     Adding photos needs JavaScript, because your photo is sent straight to
@@ -281,21 +384,55 @@ ${/* The no-script fallback is a message, not a broken control. Uploads go
 <script>${raw(UPLOAD_SCRIPT)}</script>`}`;
 }
 
-function photoTile(viewer: Viewer, listingId: string, p: PhotoView, isCover: boolean): Html {
+/**
+ * One photo, with the controls that decide what it is.
+ *
+ * ORDERING IS BUTTONS, NOT DRAG, and that is the mobile decision on this page.
+ * HTML5 drag-and-drop does not fire on touch at all — a phone, which is where
+ * these photos were taken and where they will be uploaded, gets nothing from
+ * it. Arrows and a cover button work on touch, with a mouse, from the
+ * keyboard, and with scripting off, because each one is a plain form post.
+ *
+ * `reorderPhotos` has existed and gone unused since the listings module was
+ * built; this is what finally calls it.
+ */
+function photoTile(
+  viewer: Viewer, listingId: string, p: PhotoView, index: number, total: number,
+): Html {
+  const isCover = index === 0;
+  const move = (dir: 'up' | 'down', label: string, at: IconName, disabled: boolean) => html`
+    <form method="post" action="/dashboard/listings/${listingId}/photos/${p.id}/move">
+      ${csrfField(viewer)}
+      <input type="hidden" name="dir" value="${dir}">
+      <button class="shot-btn" type="submit" title="${label}" aria-label="${label}"
+              ${disabled ? raw('disabled') : null}>${icon(at)}</button>
+    </form>`;
+
   return html`
-<div style="position:relative;border:1px solid var(--line);border-radius:8px;overflow:hidden">
-  <img src="/media/${p.storageKey}" alt="" loading="lazy"
-       style="width:100%;aspect-ratio:4/3;object-fit:cover">
+<div class="shot${isCover ? ' is-cover' : ''}">
+  <img src="/media/${p.storageKey}" alt="" loading="lazy" decoding="async">
   ${isCover
-    ? html`<span class="badge badge-live"
-                 style="position:absolute;top:6px;left:6px">Cover</span>`
+    ? html`<span class="shot-tag">${icon('star')}Cover</span>`
     : null}
-  <form method="post" action="/dashboard/listings/${listingId}/photos/${p.id}/remove"
-        style="position:absolute;top:6px;right:6px">
-    ${csrfField(viewer)}
-    <button class="btn btn-sm" type="submit" aria-label="Remove photo"
-            style="padding:3px 8px">Remove</button>
-  </form>
+  <div class="shot-bar">
+    ${move('up', 'Move earlier', 'arrowLeft', index === 0)}
+    ${move('down', 'Move later', 'arrowRight', index === total - 1)}
+    <span class="shot-spacer"></span>
+    ${isCover
+      ? null
+      : html`
+      <form method="post" action="/dashboard/listings/${listingId}/photos/${p.id}/move">
+        ${csrfField(viewer)}
+        <input type="hidden" name="dir" value="cover">
+        <button class="shot-btn" type="submit" title="Make this the cover"
+                aria-label="Make this the cover photo">${icon('star')}</button>
+      </form>`}
+    <form method="post" action="/dashboard/listings/${listingId}/photos/${p.id}/remove">
+      ${csrfField(viewer)}
+      <button class="shot-btn shot-btn-danger" type="submit" title="Remove"
+              aria-label="Remove this photo">${icon('trash')}</button>
+    </form>
+  </div>
 </div>`;
 }
 
@@ -361,18 +498,30 @@ const UPLOAD_SCRIPT = `
 (function () {
   var box = document.getElementById('uploader');
   var input = document.getElementById('photo-input');
-  var status = document.getElementById('upload-status');
+  var status = box && box.querySelector('[data-status]');
+  var grid = document.querySelector('[data-shots]');
   if (!box || !input) return;
+
   var listingId = box.getAttribute('data-listing');
+  var room = parseInt(box.getAttribute('data-room'), 10) || 0;
   if (!listingId) return;
-  box.hidden = false;
+
+  // The plain file input is the no-script fallback. With a script running,
+  // the whole zone is the control — bigger, and a drop target as well.
+  input.style.display = 'none';
+  var pick = document.createElement('button');
+  pick.type = 'button';
+  pick.className = 'btn';
+  pick.textContent = 'Choose photos';
+  input.parentNode.insertBefore(pick, input);
+  pick.addEventListener('click', function () { input.click(); });
+
+  function say(text) { if (status) status.textContent = text; }
 
   function csrf() {
     var m = document.cookie.match(/(?:^|; )__Host-portage_csrf=([^;]*)/);
     return m ? decodeURIComponent(m[1]) : '';
   }
-
-  function say(text) { if (status) status.textContent = text; }
 
   // The API answers { error: { code, message } }. Anything else — a proxy
   // error page, a truncated body — falls back to the caller's wording rather
@@ -384,8 +533,57 @@ const UPLOAD_SCRIPT = `
     } catch (e) { return fallback; }
   }
 
+  // ── drag and drop ───────────────────────────────────────────────────────
+  // A convenience on a desktop and absent on a phone, which is why it is not
+  // the only way in: the button above does the same thing everywhere.
+  ['dragenter', 'dragover'].forEach(function (t) {
+    box.addEventListener(t, function (e) { e.preventDefault(); box.classList.add('is-over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (t) {
+    box.addEventListener(t, function (e) { e.preventDefault(); box.classList.remove('is-over'); });
+  });
+  box.addEventListener('drop', function (e) {
+    if (e.dataTransfer && e.dataTransfer.files) accept(e.dataTransfer.files);
+  });
+
+  // ── the optimistic tile ─────────────────────────────────────────────────
+  // The photo appears the instant it is chosen, from a local object URL, with
+  // its own progress bar. Waiting on a spinner for a file that is already on
+  // the device is the difference between an app and a form.
+  function tileFor(file) {
+    if (!grid) {
+      grid = document.createElement('div');
+      grid.className = 'photos';
+      grid.setAttribute('data-shots', '');
+      box.parentNode.insertBefore(grid, box);
+    }
+    var el = document.createElement('div');
+    el.className = 'shot is-pending';
+    var url = URL.createObjectURL(file);
+    el.innerHTML = '<img alt=""><div class="shot-progress"><i></i></div>';
+    el.querySelector('img').src = url;
+    el.__url = url;
+    grid.appendChild(el);
+    return el;
+  }
+
+  function progress(el, pct) {
+    var bar = el.querySelector('.shot-progress i');
+    if (bar) bar.style.width = pct + '%';
+  }
+
+  function failed(el, message) {
+    el.classList.remove('is-pending');
+    var err = document.createElement('div');
+    err.className = 'shot-err';
+    err.textContent = message;
+    el.appendChild(err);
+  }
+
   // Downscale in a canvas. Falls back to the original file if anything about
   // the decode fails — a photo that uploads large beats one that does not.
+  // Re-encoding also drops EXIF here, so the common case never needs the
+  // server-side rewrite.
   function shrink(file) {
     return new Promise(function (resolve) {
       if (!window.createImageBitmap) return resolve(file);
@@ -402,9 +600,30 @@ const UPLOAD_SCRIPT = `
     });
   }
 
-  async function upload(file) {
+  // The PUT goes through XHR rather than fetch for one reason: upload
+  // progress. fetch() reports nothing until the request body has been sent,
+  // which on Regina mobile data is the entire part worth reporting.
+  function put(url, blob, mime, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('PUT', url, true);
+      xhr.setRequestHeader('content-type', mime);
+      xhr.upload.addEventListener('progress', function (e) {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 90));
+      });
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error('Storage refused the upload. Try again.'));
+      };
+      xhr.onerror = function () { reject(new Error('The connection dropped. Try again.')); };
+      xhr.send(blob);
+    });
+  }
+
+  async function upload(file, el) {
     var blob = await shrink(file);
     var mime = blob.type || file.type;
+    progress(el, 5);
 
     var ticketRes = await fetch('/api/listings/' + encodeURIComponent(listingId) + '/photos', {
       method: 'POST',
@@ -416,10 +635,7 @@ const UPLOAD_SCRIPT = `
     var ticket = await ticketRes.json();
     if (!ticket.uploadUrl) throw new Error('Photo storage is not configured.');
 
-    var put = await fetch(ticket.uploadUrl, {
-      method: 'PUT', headers: { 'content-type': mime }, body: blob
-    });
-    if (!put.ok) throw new Error('Storage refused the upload. Try again.');
+    await put(ticket.uploadUrl, blob, mime, function (pct) { progress(el, pct); });
 
     var done = await fetch('/api/uploads/complete', {
       method: 'POST',
@@ -428,28 +644,57 @@ const UPLOAD_SCRIPT = `
       body: JSON.stringify({ completionToken: ticket.uploadToken })
     });
     if (!done.ok) throw new Error(await reason(done, 'The upload could not be confirmed.'));
+    progress(el, 100);
     return done.json();
   }
 
-  input.addEventListener('change', async function () {
-    var files = Array.prototype.slice.call(input.files || []);
+  var busy = false;
+  async function accept(fileList) {
+    if (busy) return;
+    var files = Array.prototype.slice.call(fileList || []);
     if (!files.length) return;
-    input.disabled = true;
-    var strippedGps = false;
-    try {
-      for (var i = 0; i < files.length; i++) {
-        say('Uploading ' + (i + 1) + ' of ' + files.length + '…');
-        var out = await upload(files[i]);
-        if (out && out.locationDataRemoved) strippedGps = true;
-      }
-      // Said out loud, because it is a change to the owner's file that they
-      // did not ask for and would want to know about.
-      say(strippedGps ? 'Done — location data removed. Reloading…' : 'Done. Reloading…');
-      window.location.reload();
-    } catch (err) {
-      say((err && err.message) || 'That did not work. Try again.');
-      input.disabled = false;
-      input.value = '';
+
+    // Refused here as well as by the server, because the server refuses the
+    // twenty-first upload AFTER the owner has waited for twenty.
+    if (files.length > room) {
+      say('There is room for ' + room + ' more photo' + (room === 1 ? '' : 's') + '.');
+      files = files.slice(0, room);
+      if (!files.length) return;
     }
-  });
+
+    busy = true;
+    pick.disabled = true;
+    var strippedGps = false;
+    var failedCount = 0;
+
+    for (var i = 0; i < files.length; i++) {
+      var el = tileFor(files[i]);
+      say('Uploading ' + (i + 1) + ' of ' + files.length + '…');
+      try {
+        var out = await upload(files[i], el);
+        if (out && out.locationDataRemoved) strippedGps = true;
+      } catch (err) {
+        failedCount++;
+        failed(el, (err && err.message) || 'That did not work.');
+      }
+    }
+
+    busy = false;
+    pick.disabled = false;
+    input.value = '';
+
+    if (failedCount === files.length) {
+      say('Nothing was uploaded. Try again.');
+      return;
+    }
+    // Said out loud, because it is a change to the owner's file that they did
+    // not ask for and would want to know about.
+    say(strippedGps ? 'Done — location data was removed. Refreshing…' : 'Done. Refreshing…');
+    // One reload at the end, not one per photo: the tiles above are already
+    // showing the right pictures, and this is what swaps them for the stored
+    // copies and re-renders the cover and ordering controls.
+    window.location.reload();
+  }
+
+  input.addEventListener('change', function () { accept(input.files); });
 })();`;
