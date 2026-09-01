@@ -12,6 +12,11 @@ Complete analysis of the Portage zero-fee, owner-direct real-estate marketplace 
 | 04 | **[Feature list — keep or remove](04-feature-list-keep-or-remove.md)** | **The decision sheet.** Every candidate feature with reference, effort, revenue flag, phase |
 | 05 | [Regina GTM, business model, regulatory](05-regina-gtm-business-model-regulatory.md) | How to launch, how to make money without breaking "free," and the Saskatchewan legal map |
 | 06 | [Technology stack](06-technology-stack.md) | Recommended stack, AI architecture, data acquisition, build order |
+| 07 | [Backend architecture](07-backend-architecture.md) | Module layout, the security model, why each boundary is where it is |
+| 08 | [Implementation plan](08-implementation-plan.md) | Workstreams, sprints, exit gates |
+| 09 | [99acres feature review](09-99acres-feature-review.md) | Features and interaction patterns worth borrowing (**unverified** — egress blocked) |
+| 10 | [Admin console](10-admin-dashboard.md) | What the console needs, checked against the code; the build order and what has shipped |
+| 11 | **[Configuration & kill switches](11-configuration-and-kill-switches.md)** | **Where the technology configuration lives, who can turn what off, and why there is no in-app superadmin** |
 | — | [research/](research/) | The five raw research reports with full sourcing |
 
 ## Executive summary

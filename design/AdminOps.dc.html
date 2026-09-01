@@ -1,0 +1,288 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800;900&display=swap">
+  <style>
+    body { margin: 0; font-family: "Golos Text", system-ui, sans-serif; color: #0b0d12; background: #f4f5f8; }
+    a { color: #356dbe; text-decoration: none; }
+    a:hover { color: #24528f; }
+    h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+    p { margin: 0; }
+    svg { display: block; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; background: #f4f5f8; padding-bottom: 36px; font-family: 'Golos Text', system-ui, sans-serif;">
+
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 56px; background: #12151c;">
+    <div style="display: flex; align-items: center; gap: 18px;">
+      <span style="font-size: 15px; font-weight: 900; color: #ffffff;">Portage <span style="color: #7b8698; font-weight: 700;">staff</span></span>
+      <span style="font-size: 12px; color: #7b8698;">Ops</span>
+    </div>
+    <span style="font-size: 12px; color: #7b8698;">k.reddy · <span style="color: oklch(0.7 0.12 75); font-weight: 700;">admin</span></span>
+  </div>
+
+  <!-- ── the funnel that decides whether this business exists ──────── -->
+  <div style="margin: 20px 28px 0 28px; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; padding: 20px;">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px;">
+      <h1 style="font-size: 16px;">Supply funnel · last 30 days</h1>
+      <span style="font-size: 12px; color: #7b8698;">Cold start is a supply problem, so this is the number that matters first</span>
+    </div>
+    <div style="display: flex; align-items: stretch; gap: 10px;">
+      <sc-for list="{{funnel}}" as="f" hint-placeholder-count="5">
+        <div style="{{f.style}}">
+          <span style="font-size: 26px; font-weight: 900; letter-spacing: -0.02em; color: {{f.ink}};">{{f.value}}</span>
+          <span style="font-size: 12px; font-weight: 700; color: #3c4454;">{{f.label}}</span>
+          <span style="font-size: 11px; color: #9aa4b5;">{{f.rate}}</span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 16px; padding: 16px 28px 0 28px; align-items: flex-start;">
+
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 16px;">
+
+      <!-- ── health tiles ────────────────────────────────────────── -->
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
+        <sc-for list="{{tiles}}" as="t" hint-placeholder-count="6">
+          <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; padding: 16px 18px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+              <div style="width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: {{t.tint}}; color: {{t.ink}};">
+                <dc-import name="Icon" glyph="{{t.icon}}" size="{{16}}" hint-size="16px,16px"></dc-import>
+              </div>
+              <span style="font-size: 12px; font-weight: 700; color: #5b6575;">{{t.label}}</span>
+            </div>
+            <div style="display: flex; align-items: baseline; gap: 8px;">
+              <span style="font-size: 24px; font-weight: 900; letter-spacing: -0.02em; color: {{t.valueInk}};">{{t.value}}</span>
+              <span style="font-size: 11px; font-weight: 600; color: #9aa4b5;">{{t.note}}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <!-- ── block rate beside release rate ──────────────────────── -->
+      <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; padding: 20px;">
+        <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px;">
+          <h2 style="font-size: 15px;">Message moderation, 7 days</h2>
+          <span style="font-size: 12px; color: #7b8698;">1,240 messages</span>
+        </div>
+        <!-- These two are shown together on purpose: a high block rate with a
+             high release rate means the RULES are wrong, not the users. -->
+        <p style="font-size: 12px; color: #7b8698; line-height: 1.5; margin-bottom: 18px; max-width: 680px;">Read these together. A rising block rate with a rising release rate means the heuristic is over-firing; a rising block rate with releases near zero means the site is under attack. The responses are opposite.</p>
+
+        <div style="display: flex; gap: 28px;">
+          <sc-for list="{{moderation}}" as="m" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; gap: 9px; flex-grow: 1;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between;">
+                <span style="font-size: 12px; font-weight: 700; color: #5b6575;">{{m.label}}</span>
+                <span style="font-size: 17px; font-weight: 900; color: {{m.ink}};">{{m.value}}</span>
+              </div>
+              <div style="height: 6px; border-radius: 999px; background: #eef0f4; overflow: hidden;">
+                <div style="height: 6px; border-radius: 999px; width: {{m.bar}}; background: {{m.ink}};"></div>
+              </div>
+              <span style="font-size: 11px; color: #9aa4b5;">{{m.note}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <!-- ── audit trail ─────────────────────────────────────────── -->
+      <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; overflow: hidden;">
+        <div style="display: flex; align-items: baseline; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #eef0f4;">
+          <h2 style="font-size: 15px;">Audit log</h2>
+          <span style="font-size: 12px; color: #7b8698;">Append-only at the database level — a compromised app role cannot erase it</span>
+        </div>
+        <sc-for list="{{audit}}" as="a" hint-placeholder-count="4">
+          <div style="display: grid; grid-template-columns: 118px 158px 1fr 92px; gap: 14px; align-items: center; padding: 11px 20px; border-bottom: 1px solid #f8f9fb;">
+            <span style="font-size: 11px; color: #9aa4b5; font-family: ui-monospace, Menlo, monospace;">{{a.when}}</span>
+            <span style="font-size: 12px; font-weight: 700; color: #3c4454;">{{a.actor}}</span>
+            <span style="font-size: 12px; color: #5b6575;"><span style="{{a.actionStyle}}">{{a.action}}</span> {{a.subject}}</span>
+            <span style="font-size: 11px; color: #9aa4b5; font-family: ui-monospace, Menlo, monospace;">{{a.id}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- ── kill switches ───────────────────────────────────────────── -->
+    <div style="width: 372px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px;">
+      <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; padding: 18px 20px;">
+        <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 6px;">
+          <h2 style="font-size: 15px;">Kill switches</h2>
+          <span style="padding: 2px 8px; border-radius: 5px; background: oklch(0.95 0.045 75); color: oklch(0.44 0.125 75); font-size: 10px; font-weight: 800;">ADMIN ONLY</span>
+        </div>
+        <p style="font-size: 11px; color: #7b8698; line-height: 1.5; margin-bottom: 16px;">Effect within 30 seconds, no deploy. If the flag store is unreachable, everything here fails to <strong>off</strong> — a check that fails open on a spend-incurring feature is how a database blip becomes a bill.</p>
+
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <sc-for list="{{switches}}" as="s" hint-placeholder-count="8">
+            <div style="display: flex; align-items: center; gap: 11px; padding: 10px 4px; border-bottom: 1px solid #f8f9fb;">
+              <div style="width: 26px; height: 26px; border-radius: 7px; display: flex; align-items: center; justify-content: center; background: {{s.tint}}; color: {{s.ink}}; flex-shrink: 0;">
+                <dc-import name="Icon" glyph="{{s.icon}}" size="{{14}}" hint-size="14px,14px"></dc-import>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 1px; flex-grow: 1; min-width: 0;">
+                <span style="font-size: 12px; font-weight: 700; color: #12151c;">{{s.label}}</span>
+                <span style="font-size: 10px; color: #9aa4b5;">{{s.note}}</span>
+              </div>
+              <div onClick="{{s.toggle}}" style="{{s.trackStyle}}">
+                <div style="{{s.knobStyle}}"></div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; padding: 18px 20px;">
+        <h2 style="font-size: 15px; margin-bottom: 13px;">Data freshness</h2>
+        <div style="display: flex; flex-direction: column; gap: 11px;">
+          <sc-for list="{{freshness}}" as="f" hint-placeholder-count="3">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div style="display: flex; flex-direction: column; gap: 1px;">
+                <span style="font-size: 12px; font-weight: 700; color: #3c4454;">{{f.label}}</span>
+                <span style="font-size: 10px; color: #9aa4b5;">{{f.note}}</span>
+              </div>
+              <span style="font-size: 12px; font-weight: 800; color: {{f.ink}};">{{f.value}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "accent": {"editor": "color", "default": "#356dbe", "options": ["#356dbe", "#2f6f5e", "#8a4b8f", "#b4542a"], "section": "Theme"},
+  "$preview": {"width": 1440, "height": 1080}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    // Every switch starts ON except the two that are genuinely not built.
+    this.state = {
+      flags: {
+        signups: true, listings: true, uploads: true, email: true,
+        sms: false, aiSearch: false, aiModeration: true, oauthGoogle: true,
+      },
+    };
+  }
+
+  palette(hue) {
+    return { tint: 'oklch(0.95 0.045 ' + hue + ')', ink: 'oklch(0.44 0.125 ' + hue + ')' };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#356dbe';
+    const p = (h) => this.palette(h);
+    const BLUE = 250, GREEN = 155, AMBER = 75, VIOLET = 300, TEAL = 195, ROSE = 20;
+
+    const funnel = [
+      { value: '184', label: 'Signed up', rate: '' },
+      { value: '121', label: 'Email verified', rate: '66% of signups' },
+      { value: '47', label: 'Started a listing', rate: '39% of verified' },
+      { value: '31', label: 'Submitted', rate: '66% of started' },
+      { value: '28', label: 'Published', rate: '90% approved' },
+    ].map((f, i, arr) => ({
+      ...f,
+      ink: i === arr.length - 1 ? this.palette(GREEN).ink : '#12151c',
+      style: 'display: flex; flex-direction: column; gap: 3px; flex-grow: 1; padding: 16px 18px;'
+        + ' border-radius: 10px; background: '
+        + (i === arr.length - 1 ? this.palette(GREEN).tint : '#fafbfe')
+        + '; border: 1px solid ' + (i === arr.length - 1 ? this.palette(GREEN).tint : '#eef0f4') + ';',
+    }));
+
+    const tiles = [
+      { icon: 'home', label: 'Live listings', value: '284', note: '+12 this week',
+        valueInk: '#12151c', ...p(GREEN) },
+      // The stale-inventory number. Half of what a classifieds site shows
+      // being already gone is the format's oldest complaint.
+      { icon: 'calendar', label: 'Expiring in 7 days', value: '19', note: 'owners notified',
+        valueInk: this.palette(AMBER).ink, ...p(AMBER) },
+      { icon: 'file', label: 'Queue depth', value: '7', note: 'oldest 19h',
+        valueInk: '#12151c', ...p(BLUE) },
+      { icon: 'droplet', label: 'Email bounce rate', value: '0.4%', note: 'SES limit 5%',
+        valueInk: this.palette(GREEN).ink, ...p(TEAL) },
+      { icon: 'box', label: 'Uploads pending', value: '3', note: 'none over 1h',
+        valueInk: '#12151c', ...p(VIOLET) },
+      // Privacy telemetry: how often the EXIF strip actually did something.
+      { icon: 'plug', label: 'Photos with GPS stripped', value: '61%', note: 'of 412 uploads',
+        valueInk: '#12151c', ...p(ROSE) },
+    ];
+
+    const moderation = [
+      { label: 'Delivered clean', value: '96.2%', bar: '96%', ink: this.palette(GREEN).ink,
+        note: '1,193 messages' },
+      { label: 'Flagged, delivered', value: '2.9%', bar: '29%', ink: this.palette(AMBER).ink,
+        note: '36 messages, warning shown' },
+      { label: 'Blocked', value: '0.9%', bar: '9%', ink: this.palette(ROSE).ink,
+        note: '11 blocked · 2 released on review' },
+    ];
+
+    const actionTag = (hue) => {
+      const t = this.palette(hue);
+      return 'padding: 2px 7px; border-radius: 5px; font-size: 11px; font-weight: 800;'
+        + ' background: ' + t.tint + '; color: ' + t.ink + ';'
+        + ' font-family: ui-monospace, Menlo, monospace;';
+    };
+
+    const audit = [
+      { when: '09:41:12', actor: 'k.reddy · staff', action: 'listing.approve',
+        subject: '58 Angus Cres', id: '9f3c…21ab', actionStyle: actionTag(GREEN) },
+      { when: '09:38:04', actor: 'k.reddy · staff', action: 'message.release',
+        subject: 'thread 4d7e…88c1', id: '4d7e…88c1', actionStyle: actionTag(BLUE) },
+      { when: '09:22:47', actor: 'k.reddy · staff', action: 'listing.reject',
+        subject: '4412 Rae St — price implausible', id: '77b2…09de', actionStyle: actionTag(ROSE) },
+      { when: '08:55:19', actor: 'k.reddy · admin', action: 'user.suspend',
+        subject: 'jordan.w — 3 blocked messages', id: 'c1a8…4f30', actionStyle: actionTag(ROSE) },
+    ];
+
+    const flip = (key) => () => this.setState({
+      flags: { ...this.state.flags, [key]: !this.state.flags[key] },
+    });
+
+    const switches = [
+      { key: 'signups', icon: 'home', label: 'New signups', note: 'Blocks account creation', hue: BLUE },
+      { key: 'listings', icon: 'file', label: 'New listings', note: 'Existing stay live', hue: BLUE },
+      { key: 'uploads', icon: 'box', label: 'Photo uploads', note: 'Storage writes', hue: VIOLET },
+      { key: 'email', icon: 'droplet', label: 'Outbound email', note: 'SES', hue: TEAL },
+      { key: 'sms', icon: 'plug', label: 'Outbound SMS', note: 'Not registered yet', hue: AMBER },
+      { key: 'aiSearch', icon: 'bus', label: 'AI chat search', note: 'Not built', hue: AMBER },
+      { key: 'aiModeration', icon: 'shop', label: 'AI moderation', note: 'Heuristic stays on regardless', hue: GREEN },
+      { key: 'oauthGoogle', icon: 'school', label: 'Google sign-in', note: 'Password login unaffected', hue: GREEN },
+    ].map((s) => {
+      const on = this.state.flags[s.key];
+      const t = this.palette(s.hue);
+      return {
+        ...s,
+        tint: t.tint,
+        ink: t.ink,
+        toggle: flip(s.key),
+        trackStyle: 'width: 38px; height: 22px; flex-shrink: 0; border-radius: 999px; cursor: pointer;'
+          + ' display: flex; align-items: center; padding: 2px; transition: background 0.15s;'
+          + (on ? ' background: ' + this.palette(GREEN).ink + '; justify-content: flex-end;'
+                : ' background: #dde1e9; justify-content: flex-start;'),
+        knobStyle: 'width: 18px; height: 18px; border-radius: 999px; background: #ffffff;'
+          + ' box-shadow: 0 1px 3px rgba(16,24,40,0.2);',
+      };
+    });
+
+    const freshness = [
+      { label: 'Address points', note: 'City of Regina open data', value: '69,412',
+        ink: '#12151c' },
+      { label: 'Last gazetteer ingest', note: 'nothing skipped', value: '6 days ago',
+        ink: this.palette(GREEN).ink },
+      { label: 'Neighbourhood boundaries', note: 'community associations', value: '42',
+        ink: '#12151c' },
+    ];
+
+    return { accent, funnel, tiles, moderation, audit, switches, freshness };
+  }
+}
+</script>
+</body>
+</html>

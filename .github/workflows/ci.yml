@@ -54,6 +54,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The offline shim is what `typecheck:offline` substitutes for
+      # @types/node when npm is unavailable, so every check outside CI rests on
+      # it — but tsconfig sets skipLibCheck, which means nothing checks the
+      # shim itself. It had accumulated two duplicate declarations before this
+      # step existed. Cheap, and it only fails when the shim is genuinely broken.
+      - name: Typecheck the offline shim
+        run: npm run typecheck:shim
+
       - name: Build
         run: npm run build
 
@@ -95,6 +103,27 @@ jobs:
             echo "reverting $f"
             psql -h localhost -U portage -d portage_ci -v ON_ERROR_STOP=1 -q -f "$f"
           done
+
+          # A down-migration that runs without error has not necessarily
+          # reversed anything — a forgotten DROP is silent. Every table a
+          # reversible migration created must now be gone. The list is read
+          # out of the migrations, so a new one is covered when it lands.
+          # Only CREATEd tables: a migration that merely ALTERs an older
+          # table correctly leaves it standing.
+          created=$(sed -n 's/^CREATE TABLE \(IF NOT EXISTS \)\?\([a-z_][a-z0-9_]*\).*/\2/p' \
+            $(ls migrations/*.sql | grep -v '\.down\.sql' | awk -F/ '$2 >= "009"') | sort -u)
+          left=""
+          for t in $created; do
+            n=$(psql -h localhost -U portage -d portage_ci -tAc \
+              "SELECT count(*) FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='$t'")
+            [ "$n" != "0" ] && left="$left $t"
+          done
+          if [ -n "$left" ]; then
+            echo "::error::tables survived their down-migration:$left"
+            exit 1
+          fi
+          echo "checked $(echo "$created" | wc -w) reversible tables"
 
   secrets:
     name: No secrets in the diff

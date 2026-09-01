@@ -20,11 +20,18 @@ import {
 } from './policy.js';
 import { signStorageUrl } from '../../lib/crypto.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
+import type { UploadTicketIssuer } from '../listings/service.js';
 import type { Sql } from '../../db/pool.js';
 
 export interface DocumentRow {
   id: string;
-  owner_id: string;
+  /**
+   * NULL is a tombstone: the owning account was deleted and the row survives
+   * only for the append-only access log. Every user-facing query filters on
+   * `owner_id = $1`, which never matches NULL — `assertAccess` is the one
+   * that looks a document up by id alone, and `canAccess` refuses it there.
+   */
+  owner_id: string | null;
   title: string;
   kind: DocumentKind;
   storage_key: string;
@@ -60,17 +67,47 @@ export interface CreateUploadInput {
 export interface UploadTicket {
   documentId: string;
   storageKey: string;
+  /**
+   * Where the browser PUTs the bytes. Present only when object storage is
+   * configured; without it the row exists and nothing can be stored against
+   * it, which is why the page hides its uploader in that case rather than
+   * offering a control that cannot work.
+   */
+  uploadUrl?: string;
   uploadToken: string;
   expiresAt: number;
+}
+
+/** What the locker needs from object storage: a read URL, and destruction. */
+export interface DocumentStorage {
+  presignGet(key: string, opts: { expiresIn: number }): string;
+  delete(key: string): Promise<void>;
 }
 
 export class DocumentService {
   readonly #db: Sql;
   readonly #storageSecret: string;
+  /**
+   * Mints the presigned PUT, and records the pending upload.
+   *
+   * Optional for the same reason it is optional on ListingService: without
+   * object storage configured the row can still be reserved, and the locker is
+   * simply unable to hold bytes. The seam is the SAME interface listings use —
+   * `subjectType` already had a `'document'` member, because this was always
+   * where it was going.
+   */
+  readonly #uploads: UploadTicketIssuer | null;
+  readonly #storage: DocumentStorage | null;
 
-  constructor(db: Sql, storageSecret: string) {
+  constructor(
+    db: Sql,
+    storageSecret: string,
+    deps: { uploads?: UploadTicketIssuer | null; storage?: DocumentStorage | null } = {},
+  ) {
     this.#db = db;
     this.#storageSecret = storageSecret;
+    this.#uploads = deps.uploads ?? null;
+    this.#storage = deps.storage ?? null;
   }
 
   /**
@@ -124,6 +161,24 @@ export class DocumentService {
       );
     });
 
+    if (this.#uploads) {
+      const t = await this.#uploads.ticket({
+        ownerId: input.ownerId,
+        subjectType: 'document',
+        subjectId: documentId,
+        storageKey,
+        mime: input.mime,
+        bytes: input.bytes,
+      });
+      return {
+        documentId,
+        storageKey,
+        uploadUrl: t.uploadUrl,
+        uploadToken: t.completionToken,
+        expiresAt: t.expiresAt,
+      };
+    }
+
     return {
       documentId,
       storageKey,
@@ -138,10 +193,14 @@ export class DocumentService {
   async list(ownerId: string, limit = 100, offset = 0): Promise<DocumentSummary[]> {
     const capped = Math.min(Math.max(limit, 1), 100);
     const res = await this.#db.query<DocumentRow>(
+      // Stored only. A reserved row whose bytes never arrived is not a
+      // document: it lists with a Download button that leads to nothing, and
+      // it counts against the per-user cap. The same rule the listing photo
+      // read follows, for the same reason.
       `SELECT id, owner_id, title, kind, storage_key, mime, bytes,
               retention_until, created_at, deleted_at
          FROM documents
-        WHERE owner_id = $1 AND deleted_at IS NULL
+        WHERE owner_id = $1 AND deleted_at IS NULL AND status = 'stored'
         ORDER BY created_at DESC
         LIMIT $2 OFFSET $3`,
       [ownerId, capped, Math.max(offset, 0)],
@@ -198,10 +257,15 @@ export class DocumentService {
     return {
       // Bound to the requester, not just the object: a leaked link cannot be
       // replayed by a different account.
-      url: signStorageUrl(
-        { storageKey: doc.storage_key, userId: requesterId, expiresAt },
-        this.#storageSecret,
-      ),
+      // A real presigned GET when storage is configured, so the browser can
+      // actually fetch the bytes. The signed token below is the fallback for a
+      // deployment with no bucket, where there are no bytes to fetch anyway.
+      url: this.#storage
+        ? this.#storage.presignGet(doc.storage_key, { expiresIn: DOWNLOAD_URL_TTL_SEC })
+        : signStorageUrl(
+            { storageKey: doc.storage_key, userId: requesterId, expiresAt },
+            this.#storageSecret,
+          ),
       mime: doc.mime,
       expiresAt,
     };
@@ -267,17 +331,88 @@ export class DocumentService {
   }
 
   /**
-   * Retention sweep, run by the scheduler. Returns the storage keys whose
-   * bytes must now be destroyed in object storage.
+   * Documents whose bytes should no longer exist.
+   *
+   * THREE CATEGORIES:
+   *
+   *   - `retention_until <= now()` — the PIPEDA one: the purpose has expired.
+   *   - `deleted_at IS NOT NULL` — the owner deleted it. This was missing, and
+   *     `remove()` soft-deletes with a comment promising "the retention job
+   *     purges the bytes", so an owner-deleted document was never collected
+   *     and its bytes stayed in the bucket. The comment described the opposite
+   *     of what the code did.
+   *   - `owner_id IS NULL` — the account was deleted, and the row survives
+   *     only as a tombstone for the append-only access log. Immediately due:
+   *     a retention period belonging to an account that no longer exists is
+   *     not a reason to keep anything.
+   *
+   * Returns the id as well as the key, because purging has to record itself
+   * against the row or the job re-reads the same documents every night.
    */
-  async collectExpired(limit = 500): Promise<string[]> {
-    const res = await this.#db.query<{ storage_key: string }>(
-      `SELECT storage_key FROM documents
-        WHERE deleted_at IS NULL AND retention_until <= now()
+  async collectExpired(limit = 500): Promise<Array<{ id: string; storageKey: string }>> {
+    const res = await this.#db.query<{ id: string; storage_key: string }>(
+      `SELECT id, storage_key FROM documents
+        WHERE purged_at IS NULL
+          AND (retention_until <= now()
+               OR deleted_at IS NOT NULL
+               OR owner_id IS NULL)
+        ORDER BY retention_until
         LIMIT $1`,
-      [limit],
+      [Math.min(Math.max(limit, 1), 1000)],
     );
-    return res.rows.map((r) => r.storage_key);
+    return res.rows.map((r) => ({ id: r.id, storageKey: r.storage_key }));
+  }
+
+  /**
+   * Destroys the bytes, then records that it happened.
+   *
+   * THE ORDER IS THE WHOLE DESIGN. Bytes first, row second:
+   *
+   *   - bytes then row: a crash between them leaves a row still marked
+   *     unpurged pointing at an object that is already gone. The next run
+   *     retries, the storage delete is idempotent (a 404 is success), and the
+   *     row is marked. Self-healing.
+   *   - row then bytes: a crash between them leaves an object nothing points
+   *     at and nothing will ever look for again. Unrecoverable garbage, and
+   *     under PIPEDA it is undeleted personal information that the system
+   *     believes it has deleted — the worst of the two failures by far.
+   *
+   * The row survives because document_access_log references it and is
+   * append-only. What is blanked is what is personal: the title is
+   * user-entered and is frequently the most sensitive field in the record
+   * ("Eviction notice — 2100 Victoria Ave"). The id, the timestamps and the
+   * key stay, so the access log still resolves and the destruction is
+   * auditable.
+   *
+   * One failure does not stop the run. A single unreachable object should not
+   * hold up the retention of every document behind it.
+   */
+  async purgeExpired(limit = 500): Promise<{ purged: number; failed: number }> {
+    if (!this.#storage) return { purged: 0, failed: 0 };
+
+    const due = await this.collectExpired(limit);
+    let purged = 0;
+    let failed = 0;
+
+    for (const doc of due) {
+      try {
+        await this.#storage.delete(doc.storageKey);
+      } catch {
+        failed += 1;
+        continue;
+      }
+      await this.#db.query(
+        `UPDATE documents
+            SET purged_at = now(),
+                deleted_at = COALESCE(deleted_at, now()),
+                title = '(deleted)'
+          WHERE id = $1 AND purged_at IS NULL`,
+        [doc.id],
+      );
+      purged += 1;
+    }
+
+    return { purged, failed };
   }
 }
 

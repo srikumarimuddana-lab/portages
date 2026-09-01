@@ -1,0 +1,18 @@
+{
+  "objectIdFieldName": "OBJECTID",
+  "geometryType": "esriGeometryPoint",
+  "spatialReference": { "wkid": 4326 },
+  "features": [
+    { "attributes": { "OBJECTID": 101, "ADDRESS": "2100 Victoria Ave", "CIVIC_NUM": 2100,
+                      "STREET_NAME": "Victoria Ave", "POSTAL_CODE": "S4P0N7", "WEIRD_COLUMN": "x" },
+      "geometry": { "x": -104.6178, "y": 50.4452 } },
+    { "attributes": { "OBJECTID": 102, "ADDRESS": "3125 13th Ave", "CIVIC_NUM": 3125,
+                      "STREET_NAME": "13th Ave" },
+      "geometry": { "x": -104.6200, "y": 50.4300 } },
+    { "attributes": { "OBJECTID": 103, "ADDRESS": "Somewhere in the ocean" },
+      "geometry": { "x": 0.0, "y": 0.0 } },
+    { "attributes": { "OBJECTID": 104 },
+      "geometry": { "x": -104.62, "y": 50.44 } }
+  ],
+  "exceededTransferLimit": false
+}

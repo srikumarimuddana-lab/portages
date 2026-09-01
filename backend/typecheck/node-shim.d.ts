@@ -43,9 +43,13 @@ declare module 'node:assert/strict' {
     deepEqual(a: unknown, b: unknown, m?: string): void;
     notDeepEqual(a: unknown, b: unknown, m?: string): void;
     match(a: string, re: RegExp, m?: string): void;
-    ok(v: unknown, m?: string): void;
+    // Declared as an assertion function, matching @types/node, so that
+    // `assert.ok(x !== undefined)` narrows in the tests as it does at runtime.
+    ok(v: unknown, m?: string): asserts v;
     throws(fn: () => unknown, m?: unknown): void;
-    rejects(fn: () => Promise<unknown>, m?: unknown): Promise<void>;
+    doesNotThrow(fn: () => unknown, m?: unknown): void;
+    rejects(fn: () => Promise<unknown>, m?: unknown, msg?: string): Promise<void>;
+    doesNotReject(fn: () => Promise<unknown>, m?: unknown): Promise<void>;
     fail(m?: string): never;
   }
   const assert: A;
@@ -69,6 +73,7 @@ declare const Buffer: {
   from(v: string | ArrayBufferLike | Uint8Array | readonly number[], enc?: string): Buffer;
   concat(list: readonly Uint8Array[]): Buffer;
   alloc(size: number, fill?: number): Buffer;
+  isBuffer(v: unknown): v is Buffer;
 };
 interface ImportMeta { url: string }
 
@@ -119,22 +124,41 @@ declare const Request: {
 };
 
 interface Response {
+  readonly ok: boolean;
   readonly status: number;
   readonly headers: Headers;
   json(): Promise<unknown>;
   text(): Promise<string>;
 }
 declare const Response: {
-  new (body?: string | null, init?: { status?: number; headers?: Headers }): Response;
+  new (body?: string | null, init?: {
+    status?: number;
+    headers?: Record<string, string> | Headers;
+  }): Response;
+  redirect(url: string, status?: number): Response;
 };
 
 declare const TextDecoder: {
   new (label?: string, opts?: { fatal?: boolean }): { decode(input?: Uint8Array): string };
 };
-interface URLSearchParams { get(name: string): string | null }
+interface URLSearchParams {
+  get(name: string): string | null;
+  has(name: string): boolean;
+  delete(name: string): void;
+  getAll(name: string): string[];
+  set(name: string, value: string): void;
+  append(name: string, value: string): void;
+  toString(): string;
+}
+declare const URLSearchParams: {
+  // A URLSearchParams is itself a valid init — that is how one is copied.
+  new (init?: string | Record<string, string> | string[][] | URLSearchParams): URLSearchParams;
+};
 interface URL {
   readonly searchParams: URLSearchParams;
   readonly pathname: string;
+  readonly origin: string;
+  readonly href: string;
   toString(): string;
 }
 declare const URL: { new (url: string, base?: string): URL };
@@ -186,22 +210,39 @@ declare module 'node:http' {
 }
 
 declare function setTimeout(cb: (...a: unknown[]) => void, ms: number): unknown;
+declare function clearTimeout(handle: unknown): void;
 
-/** fetch and URLSearchParams: Web globals provided by Node 18+ at runtime. */
-interface FetchResponse {
-  readonly ok: boolean;
-  readonly status: number;
-  json(): Promise<unknown>;
+/**
+ * AbortController / AbortSignal: Web globals since Node 15, used to bound
+ * model calls so a hung provider cannot hold a request open.
+ */
+interface AbortSignal {
+  readonly aborted: boolean;
+  addEventListener(type: 'abort', cb: () => void): void;
+  removeEventListener(type: 'abort', cb: () => void): void;
 }
+declare const AbortSignal: { new (): AbortSignal };
+interface AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: unknown): void;
+}
+declare const AbortController: { new (): AbortController };
+
+/**
+ * fetch and URLSearchParams: Web globals provided by Node 18+ at runtime.
+ *
+ * fetch resolves to the SAME `Response` declared above, not a parallel
+ * `FetchResponse` shape. Two near-identical interfaces for one runtime object
+ * drift, and because tsconfig sets skipLibCheck this file is never itself
+ * type-checked — so the drift would surface as a confusing error in src/,
+ * or as nothing at all.
+ */
 declare function fetch(
   url: string,
-  init?: { headers?: Record<string, string> },
-): Promise<FetchResponse>;
-
-interface URLSearchParams {
-  toString(): string;
-  get(name: string): string | null;
-}
-declare const URLSearchParams: {
-  new (init?: Record<string, string>): URLSearchParams;
-};
+  init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+  },
+): Promise<Response>;

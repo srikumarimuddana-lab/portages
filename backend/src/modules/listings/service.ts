@@ -48,6 +48,7 @@ import {
   type ListingStatus,
 } from './state.js';
 import { signStorageUrl } from '../../lib/crypto.js';
+import type { AuditRecorder } from '../audit/service.js';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import type { Sql } from '../../db/pool.js';
 
@@ -152,8 +153,26 @@ export interface PhotoView {
 export interface PhotoTicket {
   photoId: string;
   storageKey: string;
+  /**
+   * Where the browser PUTs the bytes. Present only when object storage is
+   * configured; otherwise the row is reserved but nothing can be stored.
+   */
+  uploadUrl?: string;
+  /** Presented to /api/uploads/complete once the PUT succeeds. */
   uploadToken: string;
   expiresAt: number;
+}
+
+/** Issues the presigned PUT and records the pending upload. */
+export interface UploadTicketIssuer {
+  ticket(input: {
+    ownerId: string;
+    subjectType: 'listing_media' | 'document';
+    subjectId: string;
+    storageKey: string;
+    mime: string;
+    bytes: number;
+  }): Promise<{ uploadUrl: string; completionToken: string; expiresAt: number }>;
 }
 
 export interface Viewer {
@@ -163,15 +182,40 @@ export interface Viewer {
 
 export const ANONYMOUS: Viewer = { userId: null, role: 'user' };
 
+/**
+ * Resolves a typed address to an authoritative coordinate. Supplied by the
+ * gazetteer; optional so the service still works before it is loaded.
+ */
+export interface AddressResolver {
+  resolve(input: { addressLine: string; unit?: string | null; city: string; province: string }):
+    Promise<{ lat: number; lng: number; neighbourhoodId: string | null; postalCode: string | null } | null>;
+}
+
 export class ListingService {
   readonly #db: Sql;
   readonly #storageSecret: string;
   readonly #now: () => Date;
+  readonly #geocoder: AddressResolver | null;
+  readonly #uploads: UploadTicketIssuer | null;
+  /** Records staff decisions inside the same transaction that makes them. */
+  readonly #audit: AuditRecorder | null;
 
-  constructor(db: Sql, storageSecret: string, opts: { now?: () => Date } = {}) {
+  constructor(
+    db: Sql,
+    storageSecret: string,
+    opts: {
+      now?: () => Date;
+      geocoder?: AddressResolver | null;
+      uploads?: UploadTicketIssuer | null;
+      audit?: AuditRecorder | null;
+    } = {},
+  ) {
     this.#db = db;
     this.#storageSecret = storageSecret;
     this.#now = opts.now ?? (() => new Date());
+    this.#geocoder = opts.geocoder ?? null;
+    this.#uploads = opts.uploads ?? null;
+    this.#audit = opts.audit ?? null;
   }
 
   // ── create ────────────────────────────────────────────────────────────────
@@ -202,16 +246,37 @@ export class ListingService {
     const description = input.description?.trim() || null;
     const source = input.descriptionSource ?? 'human';
 
+    // Coordinates come from the City of Regina gazetteer, never from Apple.
+    // Apple's licence defines latitude and longitude as Map Data and forbids
+    // retaining it, and a property row keeps its coordinate permanently — so
+    // the pin has to be geocoded from data we are allowed to store, and only
+    // RENDERED on an Apple map. Resolution failing is not an error: the
+    // listing is created without a coordinate and simply does not appear on
+    // the map until an address point matches.
+    const located = this.#geocoder
+      ? await this.#geocoder.resolve({
+          addressLine: input.address.addressLine,
+          unit: input.address.unit ?? null,
+          city,
+          province,
+        }).catch(() => null)
+      : null;
+
     return this.#db.transaction(async (tx) => {
       // Fill gaps on an existing property, never overwrite. Two owners can
       // legitimately reach the same row (a landlord and a previous seller),
       // and the second must not be able to rewrite the first's data.
       const prop = await tx.query<{ id: string }>(
-        `INSERT INTO properties (address_line, unit, address_norm, city, province, postal_code)
-         VALUES ($1,$2,$3,$4,$5,$6)
+        `INSERT INTO properties
+           (address_line, unit, address_norm, city, province, postal_code,
+            lat, lng, neighbourhood_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON CONFLICT (address_norm, city, province) DO UPDATE
-           SET postal_code = COALESCE(properties.postal_code, EXCLUDED.postal_code),
-               updated_at  = now()
+           SET postal_code      = COALESCE(properties.postal_code, EXCLUDED.postal_code),
+               lat              = COALESCE(properties.lat, EXCLUDED.lat),
+               lng              = COALESCE(properties.lng, EXCLUDED.lng),
+               neighbourhood_id = COALESCE(properties.neighbourhood_id, EXCLUDED.neighbourhood_id),
+               updated_at       = now()
          RETURNING id`,
         [
           input.address.addressLine.trim(),
@@ -219,7 +284,10 @@ export class ListingService {
           norm,
           city,
           province,
-          postal,
+          postal ?? located?.postalCode ?? null,
+          located?.lat ?? null,
+          located?.lng ?? null,
+          located?.neighbourhoodId ?? null,
         ],
       );
       const propertyId = prop.rows[0]!.id;
@@ -462,7 +530,7 @@ export class ListingService {
     listingId: string,
     viewer: Viewer,
     action: ListingAction,
-    opts: { reason?: string } = {},
+    opts: { reason?: string; ip?: string } = {},
   ): Promise<{ status: ListingStatus }> {
     return this.#db.transaction(async (tx) => {
       const res = await tx.query<ListingRow & { email_verified_at: Date | null }>(
@@ -520,7 +588,9 @@ export class ListingService {
         throw err;
       }
 
-      // A staff decision closes the queue entry it was made from.
+      // A staff decision closes the queue entry it was made from, and is
+      // recorded. Both happen inside THIS transaction, so a decision cannot
+      // exist without its audit entry or the other way round.
       if (isStaff && (verdict.to === 'live' || verdict.to === 'rejected')) {
         await tx.query(
           `UPDATE moderation_queue
@@ -528,6 +598,20 @@ export class ListingService {
             WHERE subject_type = 'listing' AND subject_id = $1 AND state = 'open'`,
           [listingId, viewer.userId, verdict.to === 'live' ? 'approved' : 'rejected'],
         );
+
+        await this.#audit?.record(tx, {
+          actorId: viewer.userId!,
+          actorRole: viewer.role,
+          action: verdict.to === 'live' ? 'listing.approve' : 'listing.reject',
+          subject: 'listing',
+          subjectId: listingId,
+          before: { status: row.status },
+          after: {
+            status: verdict.to,
+            ...(opts.reason ? { reason: opts.reason } : {}),
+          },
+          ip: opts.ip,
+        });
       }
 
       return { status: verdict.to };
@@ -605,6 +689,28 @@ export class ListingService {
          Number(count.rows[0]!.next)],
       );
     });
+
+    // The upload service mints the presigned PUT and records the pending
+    // upload, so the row and the object are created by the same step. Without
+    // it configured the row still exists — the listing is simply not
+    // publishable until a photo can actually be stored.
+    if (this.#uploads) {
+      const t = await this.#uploads.ticket({
+        ownerId,
+        subjectType: 'listing_media',
+        subjectId: photoId,
+        storageKey,
+        mime: input.mime,
+        bytes: input.bytes,
+      });
+      return {
+        photoId,
+        storageKey,
+        uploadUrl: t.uploadUrl,
+        uploadToken: t.completionToken,
+        expiresAt: t.expiresAt,
+      };
+    }
 
     const expiresAt = Math.floor(this.#now().getTime() / 1000) + PHOTO_UPLOAD_TTL_SEC;
     return {
@@ -688,7 +794,10 @@ export class ListingService {
     row: ListingRow & { email_verified_at: Date | null },
   ): Promise<void> {
     const photos = await tx.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM listing_media WHERE listing_id = $1 AND kind = 'photo'`,
+      // Only stored photos count. A reserved row whose bytes never arrived
+      // must not make a listing look ready to publish.
+      `SELECT count(*)::text AS n FROM listing_media
+        WHERE listing_id = $1 AND kind = 'photo' AND status = 'stored'`,
       [row.id],
     );
     const blockers = publishBlockers({
@@ -751,9 +860,13 @@ export class ListingService {
       id: string; listing_id: string; storage_key: string; kind: string;
       mime: string; bytes: string; position: number;
     }>(
+      // Stored only, the same rule #assertReadyToPublish applies. A reserved
+      // row whose bytes never arrived is not a photo: rendering it gives every
+      // visitor a broken image, and counting it tells an owner their listing
+      // has a photo right up until submitting refuses because it has none.
       `SELECT id, listing_id, storage_key, kind, mime, bytes, position
          FROM listing_media
-        WHERE listing_id = ANY($1::uuid[])
+        WHERE listing_id = ANY($1::uuid[]) AND status = 'stored'
         ORDER BY listing_id, position`,
       [listingIds as string[]],
     );

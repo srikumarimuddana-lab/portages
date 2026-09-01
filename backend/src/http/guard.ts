@@ -30,10 +30,12 @@ import {
   forbidden,
   notFound,
   payloadTooLarge,
+  serviceUnavailable,
   tooManyRequests,
   unauthorized,
   AppError,
 } from '../lib/errors.js';
+import { FLAGS, type FlagKey } from '../modules/flags/registry.js';
 import type { Schema } from '../lib/validate.js';
 import { generateToken, pseudonymize } from '../lib/crypto.js';
 import type { ResolvedSession, UserRole } from '../modules/auth/service.js';
@@ -60,6 +62,29 @@ export interface SessionResolver {
   resolveSession(token: string): Promise<ResolvedSession | null>;
 }
 
+/**
+ * What the guard needs from the flags module, narrowed so it cannot flip one.
+ * Satisfied by FlagService.
+ */
+export interface FlagReader {
+  isEnabled(key: FlagKey, subjectId?: string | null): Promise<boolean>;
+}
+
+/**
+ * What a caller is told when a switch is thrown.
+ *
+ * Written for the person who hits it, not for a log. "Temporarily
+ * unavailable" sends someone to refresh for an hour; saying what is off and
+ * what still works tells them whether to wait or to do something else.
+ */
+const FLAG_OFF_MESSAGE: Partial<Record<FlagKey, string>> = {
+  'signups.new': 'New accounts are paused right now. Existing accounts can still sign in.',
+  'listings.new': 'New listings are paused right now. You can still edit and publish listings you already have.',
+  'uploads.new': 'Uploads are paused right now. Everything already uploaded is unaffected.',
+  'oauth.google': 'Google sign-in is unavailable right now. You can sign in with your email and password.',
+  'oauth.facebook': 'Facebook sign-in is unavailable right now. You can sign in with your email and password.',
+};
+
 export interface GuardConfig {
   allowedOrigins: readonly string[];
   auth: SessionResolver;
@@ -76,18 +101,57 @@ export interface GuardConfig {
     write: Limiter;
     auth: Limiter;
   };
+  /**
+   * Absent means no flag gating in this deployment; a route declaring
+   * `requireFlag` then falls back to that flag's registry fail-safe.
+   */
+  flags?: FlagReader;
 }
 
-export interface GuardOptions {
+interface GuardOptionsBase {
   /** Reject anonymous callers. */
   requireAuth: boolean;
   /** Which limiter bucket applies. */
   limit: keyof GuardConfig['limiters'];
   /** Validate and return the JSON body against this schema. */
   body?: Schema<unknown>;
-  /** Restrict to these roles. Implies requireAuth. */
-  requireRole?: readonly UserRole[];
 }
+
+/**
+ * `requireRole` and `requireFlag` are mutually exclusive, and the type says so
+ * because a comment would not hold.
+ *
+ * Two rules collide on a route that wanted both, and they cannot both be
+ * satisfied by an ordering:
+ *
+ *   - a role-gated route must answer 404 to everyone without the role, so a
+ *     stranger cannot tell it exists;
+ *   - a switched-off route answers 503, which says it exists.
+ *
+ * Checking the flag first leaks the admin surface to anyone with a URL list.
+ * Checking it last would make every public flag-gated route pay for session
+ * resolution and body parsing before a refusal that costs one cached boolean.
+ *
+ * Neither trade is necessary, because the combination should not exist:
+ * **no admin route is ever flag-gated.** The console is how a thrown switch
+ * gets released, and a switch that can disable its own off-switch is a trap
+ * whose only exit is the deploy this whole layer exists to avoid. Making it a
+ * type error is how that stays true after everyone who read this has left.
+ */
+export type GuardOptions =
+  | (GuardOptionsBase & {
+      /** Restrict to these roles. Implies requireAuth. Never with requireFlag. */
+      requireRole: readonly UserRole[];
+      requireFlag?: never;
+    })
+  | (GuardOptionsBase & {
+      requireRole?: never;
+      /**
+       * Refuse with 503 while this kill switch is off. Declared per route so
+       * the check cannot be forgotten in one branch of a handler.
+       */
+      requireFlag?: FlagKey;
+    });
 
 export interface Guarded<T> {
   ctx: GuardContext;
@@ -142,6 +206,34 @@ export async function guard<T = undefined>(
   const verdict = await limiter.check(key);
   if (!verdict.allowed) throw new RateLimitError(verdict.retryAfterSec);
 
+  // 3b. Kill switch, if this route declares one. After the rate limit so a
+  //     switched-off endpoint is still throttled rather than becoming a free
+  //     thing to hammer, and before the body is read so a disabled capability
+  //     costs one cached boolean.
+  //
+  //     503, not 403 or 404: the route exists, the caller is not the problem,
+  //     and it will work again. That is what a 503 means, and it is the one
+  //     status a client can sensibly retry.
+  //
+  //     No admin route is ever flag-gated. The console is how a thrown switch
+  //     gets un-thrown, and a switch that can disable its own off-switch is a
+  //     trap with no way out.
+  //     The `!requireRole` clause is unreachable through the type above, which
+  //     forbids the combination. It is here because types are erased: if the
+  //     pair is ever forced past them, the role gate must still govern, and a
+  //     404 must not turn into a 503 that confirms an admin route exists.
+  //     Ignoring the switch is the right fallback rather than a compromise —
+  //     an admin route is one that must never be switchable in the first place.
+  if (opts.requireFlag && !opts.requireRole) {
+    // Absent reader means the flags module is not wired in this deployment —
+    // not that the store is down. Either way the honest answer is the same
+    // one the service gives when it cannot read: the registry's fail-safe.
+    const on = cfg.flags
+      ? await cfg.flags.isEnabled(opts.requireFlag)
+      : FLAGS[opts.requireFlag].failsafe;
+    if (!on) throw serviceUnavailable(FLAG_OFF_MESSAGE[opts.requireFlag] ?? undefined);
+  }
+
   // 4. Body: bounded read, then parse. Content-Length is a hint, not a
   //    guarantee, so the actual bytes are counted too.
   let body: unknown = undefined;
@@ -176,14 +268,19 @@ export async function guard<T = undefined>(
       csrfHash = resolved.csrfHash;
     }
   }
-  if (opts.requireAuth && !ctx.principal) throw unauthorized();
-
   // Role gate. Deliberately a 404, not a 403: an admin route that answers
   // "forbidden" to a non-staff caller has just confirmed the route exists and
   // is worth attacking. To everyone without the role, it is not there.
+  //
+  // It runs BEFORE the auth check, not after, and the order is the point. A
+  // 401 to an anonymous caller says "there is something here worth logging in
+  // for" just as loudly as a 403 does — it would leak the whole admin surface
+  // to anyone with a URL list and no session at all, which is the cheapest
+  // possible probe.
   if (opts.requireRole && (!ctx.principal || !opts.requireRole.includes(ctx.principal.role))) {
     throw notFound();
   }
+  if (opts.requireAuth && !ctx.principal) throw unauthorized();
 
   // 6. CSRF, for authenticated writes. An anonymous write (signup, login) has
   //    no session to protect, and the origin check above already covers it.

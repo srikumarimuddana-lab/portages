@@ -26,6 +26,40 @@ import {
   getListing, listMine, createListing, updateListing, transitionListing,
   attestDescription, addPhoto, removePhoto, reorderPhotos,
 } from './http/routes/listings.js';
+import {
+  searchListings, countListings, autocomplete, neighbourhoods, geoHealth,
+} from './http/routes/search.js';
+import { completeUpload, recordPreview } from './http/routes/uploads.js';
+import {
+  listThreads, unreadCount, getThread, startThread, replyToThread,
+  markThreadRead, archiveThread, blockThread, unblockThread, listingThreads,
+} from './http/routes/messages.js';
+import {
+  listQueue, queueStats, getQueueItem, dismissQueueItem,
+  decideListing, reviewMessage, decideMessage, listAudit,
+  listFlags,
+  setFlag,
+} from './http/routes/admin.js';
+import { aiSearch, describeListing } from './http/routes/ai.js';
+import { createReport, listReports, decideReports } from './http/routes/reports.js';
+import { homeRoute, searchRoute, listingRoute, signInRoute } from './web/routes.js';
+import {
+  signUpRoute, ownerListingsRoute, newListingRoute, editListingRoute,
+  inboxRoute, threadRoute, verifyEmailRoute, forgotPasswordRoute, resetPasswordRoute,
+  newReportRoute, documentsRoute, documentDownloadRoute, savedSearchesRoute,
+  queueRoute, listingReviewRoute, messageReviewRoute, flagsRoute, auditRoute, mediaRoute,
+} from './web/routes-app.js';
+import {
+  signInAction, signUpAction, signOutAction,
+  createListingAction, updateListingAction, transitionListingAction,
+  attestListingAction, removePhotoAction, movePhotoAction, draftDescriptionAction,
+  enquireAction, replyAction, blockThreadAction, reportAction,
+  sendEmailCodeAction, confirmEmailCodeAction, deleteDocumentAction,
+  saveSearchAction, setSearchAlertAction, deleteSearchAction,
+  forgotPasswordAction, resetPasswordAction,
+  decideListingAction, decideMessageAction, dismissQueueAction, setFlagAction,
+} from './web/actions.js';
+import { runAlerts, expireListings, purgeDocuments } from './http/routes/jobs.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -93,6 +127,158 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/api/auth/oauth/:provider/callback',
     (req, p) => oauthCallback(req, p['provider']!, oauthDeps));
 
+  const searchDeps = {
+    cfg: app.cfg, search: app.search, gazetteer: app.gazetteer, hsts: app.hsts,
+  };
+  route('GET', '/api/search/listings', (req) => searchListings(req, searchDeps));
+  route('GET', '/api/search/count', (req) => countListings(req, searchDeps));
+  route('GET', '/api/geo/autocomplete', (req) => autocomplete(req, searchDeps));
+  route('GET', '/api/geo/neighbourhoods', (req) => neighbourhoods(req, searchDeps));
+  route('GET', '/api/geo/health', (req) => geoHealth(req, searchDeps));
+
+  const uploadDeps = { cfg: app.cfg, uploads: app.uploads, hsts: app.hsts };
+  route('POST', '/api/uploads/complete', (req) => completeUpload(req, uploadDeps));
+  // Scheduled work. GET is what Vercel Cron sends; POST is for a manual run.
+  // Guarded by a shared secret either way, not by being unlinked.
+  route('GET', '/api/jobs/alerts', (req) => runAlerts(req, app));
+  route('POST', '/api/jobs/alerts', (req) => runAlerts(req, app));
+  route('GET', '/api/jobs/expire-listings', (req) => expireListings(req, app));
+  route('POST', '/api/jobs/expire-listings', (req) => expireListings(req, app));
+  route('GET', '/api/jobs/purge-documents', (req) => purgeDocuments(req, app));
+  route('POST', '/api/jobs/purge-documents', (req) => purgeDocuments(req, app));
+  route('POST', '/api/uploads/preview', (req) => recordPreview(req, uploadDeps));
+
+  // Admin. Every one of these answers 404 to a caller without the role.
+  const aiDeps = {
+    cfg: app.cfg, chatSearch: app.chatSearch, listingBuilder: app.listingBuilder,
+    search: app.search, gazetteer: app.gazetteer, listings: app.listings,
+    metered: app.metered, aiLimiter: app.aiLimiter, hsts: app.hsts,
+  };
+  route('POST', '/api/search/ai', (req) => aiSearch(req, aiDeps));
+  route('POST', '/api/listings/:id/describe',
+    (req, p) => describeListing(req, p['id']!, aiDeps));
+
+  // ── pages ──────────────────────────────────────────────────────────────
+  // Registered before the API routes so a bare path serves HTML while the
+  // /api prefix keeps serving JSON. Read-only: every write these pages offer
+  // posts to the API, where the guard applies in full.
+  route('GET', '/', (req) => homeRoute(req, app));
+  route('GET', '/search', (req) => searchRoute(req, app));
+  route('GET', '/listings/:id', (req, p) => listingRoute(req, p['id']!, app));
+  route('GET', '/signin', (req) => signInRoute(req, app));
+  route('GET', '/signup', (req) => signUpRoute(req, app));
+  route('GET', '/forgot-password', (req) => forgotPasswordRoute(req, app));
+  route('GET', '/reset-password', (req) => resetPasswordRoute(req, app));
+  route('GET', '/account/email', (req) => verifyEmailRoute(req, app));
+  route('GET', '/reports/new', (req) => newReportRoute(req, app));
+  route('GET', '/account/searches', (req) => savedSearchesRoute(req, app));
+  route('GET', '/account/documents', (req) => documentsRoute(req, app));
+  route('GET', '/account/documents/:id/download',
+    (req, p) => documentDownloadRoute(req, p['id']!, app));
+  route('GET', '/media/:key', (req, p) => mediaRoute(req, p['key']!, app));
+
+  route('GET', '/dashboard/listings', (req) => ownerListingsRoute(req, app));
+  route('GET', '/dashboard/listings/new', (req) => newListingRoute(req, app));
+  // `/new` is registered first: matching is first-wins and `new` would
+  // otherwise be read as a listing id by the `:id/edit` pattern below.
+  route('GET', '/dashboard/listings/:id/edit', (req, p) => editListingRoute(req, p['id']!, app));
+  route('GET', '/messages', (req) => inboxRoute(req, app));
+  route('GET', '/messages/:id', (req, p) => threadRoute(req, p['id']!, app));
+
+  // Staff pages. These answer 404 to everyone else, matching requireRole.
+  route('GET', '/admin/queue', (req) => queueRoute(req, app));
+  route('GET', '/admin/listings/:id', (req, p) => listingReviewRoute(req, p['id']!, app));
+  route('GET', '/admin/messages/:id', (req, p) => messageReviewRoute(req, p['id']!, app));
+  route('GET', '/admin/flags', (req) => flagsRoute(req, app));
+  route('GET', '/admin/audit', (req) => auditRoute(req, app));
+
+  // ── form posts ─────────────────────────────────────────────────────────
+  // Distinct paths from the JSON API on purpose: these accept
+  // application/x-www-form-urlencoded with a CSRF value in a hidden field,
+  // and answer with a 303 rather than JSON. The API keeps its own contract.
+  route('POST', '/signin', (req) => signInAction(req, app));
+  route('POST', '/signup', (req) => signUpAction(req, app));
+  route('POST', '/signout', (req) => signOutAction(req, app));
+  route('POST', '/reports', (req) => reportAction(req, app));
+  route('POST', '/forgot-password', (req) => forgotPasswordAction(req, app));
+  route('POST', '/reset-password', (req) => resetPasswordAction(req, app));
+  route('POST', '/account/email/send', (req) => sendEmailCodeAction(req, app));
+  route('POST', '/account/email/confirm', (req) => confirmEmailCodeAction(req, app));
+  route('POST', '/account/documents/:id/delete',
+    (req, p) => deleteDocumentAction(req, p['id']!, app));
+  route('POST', '/account/searches', (req) => saveSearchAction(req, app));
+  route('POST', '/account/searches/:id/alert',
+    (req, p) => setSearchAlertAction(req, p['id']!, app));
+  route('POST', '/account/searches/:id/delete',
+    (req, p) => deleteSearchAction(req, p['id']!, app));
+
+  route('POST', '/dashboard/listings', (req) => createListingAction(req, app));
+  route('POST', '/dashboard/listings/:id/edit',
+    (req, p) => updateListingAction(req, p['id']!, app));
+  route('POST', '/dashboard/listings/:id/transition',
+    (req, p) => transitionListingAction(req, p['id']!, app));
+  route('POST', '/dashboard/listings/:id/attest',
+    (req, p) => attestListingAction(req, p['id']!, app));
+  route('POST', '/dashboard/listings/:id/draft',
+    (req, p) => draftDescriptionAction(req, p['id']!, app));
+  route('POST', '/dashboard/listings/:id/photos/:photoId/remove',
+    (req, p) => removePhotoAction(req, p['id']!, p['photoId']!, app));
+  route('POST', '/dashboard/listings/:id/photos/:photoId/move',
+    (req, p) => movePhotoAction(req, p['id']!, p['photoId']!, app));
+
+  route('POST', '/listings/:id/enquire', (req, p) => enquireAction(req, p['id']!, app));
+  route('POST', '/messages/:id/reply', (req, p) => replyAction(req, p['id']!, app));
+  route('POST', '/messages/:id/block', (req, p) => blockThreadAction(req, p['id']!, app));
+  route('POST', '/messages/:id/unblock',
+    (req, p) => blockThreadAction(req, p['id']!, app, true));
+
+  route('POST', '/admin/queue/:id/dismiss', (req, p) => dismissQueueAction(req, p['id']!, app));
+  route('POST', '/admin/listings/:id/decide',
+    (req, p) => decideListingAction(req, p['id']!, app));
+  route('POST', '/admin/messages/:id/decide',
+    (req, p) => decideMessageAction(req, p['id']!, app));
+  route('POST', '/admin/flags/:key', (req, p) => setFlagAction(req, p['key']!, app));
+
+  const reportDeps = { cfg: app.cfg, reports: app.reports, hsts: app.hsts };
+  route('POST', '/api/reports', (req) => createReport(req, reportDeps));
+  route('GET', '/api/admin/reports/:type/:id',
+    (req, p) => listReports(req, p['type']!, p['id']!, reportDeps));
+  route('POST', '/api/admin/reports/:type/:id/decide',
+    (req, p) => decideReports(req, p['type']!, p['id']!, reportDeps));
+
+  const adminDeps = {
+    cfg: app.cfg, db: app.db, moderation: app.moderation, listings: app.listings,
+    messaging: app.messaging, audit: app.audit, flags: app.flags, hsts: app.hsts,
+  };
+  route('GET', '/api/admin/queue/stats', (req) => queueStats(req, adminDeps));
+  route('GET', '/api/admin/queue', (req) => listQueue(req, adminDeps));
+  route('GET', '/api/admin/queue/:id', (req, p) => getQueueItem(req, p['id']!, adminDeps));
+  route('POST', '/api/admin/queue/:id/dismiss',
+    (req, p) => dismissQueueItem(req, p['id']!, adminDeps));
+  route('POST', '/api/admin/listings/:id/decide',
+    (req, p) => decideListing(req, p['id']!, adminDeps));
+  route('GET', '/api/admin/messages/:id', (req, p) => reviewMessage(req, p['id']!, adminDeps));
+  route('POST', '/api/admin/messages/:id/decide',
+    (req, p) => decideMessage(req, p['id']!, adminDeps));
+  route('GET', '/api/admin/audit', (req) => listAudit(req, adminDeps));
+  route('GET', '/api/admin/flags', (req) => listFlags(req, adminDeps));
+  route('POST', '/api/admin/flags/:key', (req, p) => setFlag(req, p['key']!, adminDeps));
+
+  const msgDeps = {
+    cfg: app.cfg, messaging: app.messaging, hsts: app.hsts,
+    enquiryLimiter: app.enquiryLimiter,
+  };
+  // `/unread` before `/:id`, or the literal is read as a thread id.
+  route('GET', '/api/threads/unread', (req) => unreadCount(req, msgDeps));
+  route('GET', '/api/threads', (req) => listThreads(req, msgDeps));
+  route('POST', '/api/threads', (req) => startThread(req, msgDeps));
+  route('GET', '/api/threads/:id', (req, p) => getThread(req, p['id']!, msgDeps));
+  route('POST', '/api/threads/:id/messages', (req, p) => replyToThread(req, p['id']!, msgDeps));
+  route('POST', '/api/threads/:id/read', (req, p) => markThreadRead(req, p['id']!, msgDeps));
+  route('PUT', '/api/threads/:id/archive', (req, p) => archiveThread(req, p['id']!, msgDeps));
+  route('POST', '/api/threads/:id/block', (req, p) => blockThread(req, p['id']!, msgDeps));
+  route('DELETE', '/api/threads/:id/block', (req, p) => unblockThread(req, p['id']!, msgDeps));
+
   const listingDeps = { cfg: app.cfg, listings: app.listings, hsts: app.hsts };
   // `/mine` is registered before `/:id`. Matching is first-wins, so the
   // literal must come first or "mine" is read as a listing id.
@@ -109,6 +295,7 @@ async function buildRoutes(): Promise<void> {
     (req, p) => reorderPhotos(req, p['id']!, listingDeps));
   route('DELETE', '/api/listings/:id/photos/:photoId',
     (req, p) => removePhoto(req, p['id']!, p['photoId']!, listingDeps));
+  route('GET', '/api/listings/:id/threads', (req, p) => listingThreads(req, p['id']!, msgDeps));
 
   route('GET', '/api/documents', (req) => listDocuments(req, docDeps));
   route('POST', '/api/documents', (req) => createUpload(req, docDeps));

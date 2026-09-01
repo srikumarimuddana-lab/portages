@@ -31,9 +31,15 @@ function fakeAuth(sessions: Map<string, FakeSession>) {
   return {
     async resolveSession(token: string) {
       const s = sessions.get(token);
-      // The real resolver reads the role from `users` on every request; the
-      // fake defaults it so existing cases need no change.
-      return s ? { ...s, role: s.role ?? ('user' as const) } : null;
+      // The real resolver reads role, email and verification state from
+      // `users` on every request; the fake defaults them so existing cases
+      // need no change.
+      return s
+        ? {
+            email: 'u@example.test', emailVerified: true,
+            ...s, role: s.role ?? ('user' as const),
+          }
+        : null;
     },
   };
 }
@@ -350,4 +356,450 @@ test('headers: API CSP forbids everything by default', () => {
   assert.match(csp, /default-src 'none'/);
   assert.match(csp, /frame-ancestors 'none'/);
   assert.match(csp, /base-uri 'none'/);
+});
+
+// ── RBAC ────────────────────────────────────────────────────────────────────
+//
+// `requireRole` answers 404, not 403, and that is the behaviour under test.
+// A 403 tells a stranger the route exists and is worth attacking; to everyone
+// without the role it must be indistinguishable from a route that is not there.
+
+function sessionAs(role: 'user' | 'staff' | 'admin') {
+  const m = createSessionMaterial();
+  const sessions = new Map([[m.sessionToken, { userId: 'u1', sessionId: 's1', csrfHash: m.csrfHash, role }]]);
+  return { m, cfg: makeCfg({ auth: fakeAuth(sessions) }) };
+}
+
+const asRole = (m: ReturnType<typeof createSessionMaterial>, method = 'GET') =>
+  req(method, {
+    origin: ORIGIN,
+    cookie: `${SESSION_COOKIE}=${m.sessionToken}; ${CSRF_COOKIE}=${m.csrfToken}`,
+    csrf: m.csrfToken,
+    ...(method === 'GET' ? {} : { body: {} }),
+  });
+
+test('guard: an ordinary user gets 404 from a staff route, never 403', async () => {
+  const { m, cfg } = sessionAs('user');
+  await expectError(
+    () => guard(asRole(m), cfg, { requireAuth: true, limit: 'read', requireRole: ['staff', 'admin'] }),
+    404,
+    'user reaching a staff route',
+  );
+});
+
+test('guard: an anonymous caller gets 404 from a staff route, not 401', async () => {
+  // 401 would say "there is something here to log in for". There must not be
+  // a way to enumerate the admin surface from the outside.
+  await expectError(
+    () => guard(req('GET', { origin: ORIGIN }), makeCfg(), {
+      requireAuth: true, limit: 'read', requireRole: ['staff', 'admin'],
+    }),
+    404,
+    'anonymous reaching a staff route',
+  );
+});
+
+test('guard: staff reach staff routes', async () => {
+  const { m, cfg } = sessionAs('staff');
+  const { ctx } = await guard(asRole(m), cfg, {
+    requireAuth: true, limit: 'read', requireRole: ['staff', 'admin'],
+  });
+  assert.equal(ctx.principal?.role, 'staff');
+});
+
+test('guard: staff do NOT reach admin-only routes', async () => {
+  // The whole point of the split: a part-time moderator can work the queue
+  // without gaining the ability to read everyone's decisions or turn the site
+  // off. If this passes for staff, the two roles are one role.
+  const { m, cfg } = sessionAs('staff');
+  await expectError(
+    () => guard(asRole(m), cfg, { requireAuth: true, limit: 'read', requireRole: ['admin'] }),
+    404,
+    'staff reaching an admin-only route',
+  );
+});
+
+test('guard: admin reach admin-only routes', async () => {
+  const { m, cfg } = sessionAs('admin');
+  const { ctx } = await guard(asRole(m), cfg, {
+    requireAuth: true, limit: 'read', requireRole: ['admin'],
+  });
+  assert.equal(ctx.principal?.role, 'admin');
+});
+
+test('guard: the role gate runs before the body is trusted, and cannot be set by one', async () => {
+  // The role comes from the session row on every request. A body field named
+  // `role` is just a field, and the guard's schema validation rejects unknown
+  // ones anyway — but the gate must not depend on that having happened.
+  const { m, cfg } = sessionAs('user');
+  const forged = req('POST', {
+    origin: ORIGIN,
+    cookie: `${SESSION_COOKIE}=${m.sessionToken}; ${CSRF_COOKIE}=${m.csrfToken}`,
+    csrf: m.csrfToken,
+    body: { role: 'admin' },
+  });
+  await expectError(
+    () => guard(forged, cfg, { requireAuth: true, limit: 'write', requireRole: ['admin'] }),
+    404,
+    'role claimed in a body',
+  );
+});
+
+test('guard: a staff route still enforces CSRF on writes', async () => {
+  // Being staff is not a reason to skip the check — a moderator with an open
+  // session is the single most valuable target for a cross-site write.
+  const { m, cfg } = sessionAs('staff');
+  await expectError(
+    () => guard(
+      req('POST', {
+        origin: ORIGIN,
+        cookie: `${SESSION_COOKIE}=${m.sessionToken}; ${CSRF_COOKIE}=${m.csrfToken}`,
+        body: {},
+      }),
+      cfg,
+      { requireAuth: true, limit: 'write', requireRole: ['staff', 'admin'] },
+    ),
+    403,
+    'staff write without CSRF',
+  );
+});
+
+// ── kill switches at the gate ───────────────────────────────────────────────
+//
+// 503, not 403 or 404: the route exists, the caller is not the problem, and
+// it will work again. That is the one status a client can sensibly retry.
+
+const flagsOff = (off: readonly string[]) => ({
+  async isEnabled(key: string) { return !off.includes(key); },
+});
+
+test('guard: a thrown kill switch refuses the route with 503', async () => {
+  await expectError(
+    () => guard(req('POST', { origin: ORIGIN, body: {} }),
+      makeCfg({ flags: flagsOff(['signups.new']) as never }),
+      { requireAuth: false, limit: 'write', requireFlag: 'signups.new' }),
+    503,
+    'signups switched off',
+  );
+});
+
+test('guard: the message says what is off and what still works', async () => {
+  // "Temporarily unavailable" sends someone refreshing for an hour. Telling
+  // them existing accounts still sign in tells them whether to wait.
+  try {
+    await guard(req('POST', { origin: ORIGIN, body: {} }),
+      makeCfg({ flags: flagsOff(['signups.new']) as never }),
+      { requireAuth: false, limit: 'write', requireFlag: 'signups.new' });
+    assert.fail('expected a refusal');
+  } catch (err) {
+    assert.ok(err instanceof AppError);
+    assert.match(err.message, /existing accounts/i);
+    assert.equal(err.code, 'unavailable');
+  }
+});
+
+test('guard: an un-thrown switch lets the route through', async () => {
+  const { ctx } = await guard(req('POST', { origin: ORIGIN, body: {} }),
+    makeCfg({ flags: flagsOff([]) as never }),
+    { requireAuth: false, limit: 'write', requireFlag: 'signups.new' });
+  assert.equal(ctx.principal, null);
+});
+
+test('guard: the switch is checked AFTER the rate limit', async () => {
+  // Otherwise a switched-off endpoint becomes a free thing to hammer: the
+  // cheap refusal would run before the counter was incremented.
+  const limiter = new RateLimiter({ windowMs: 60_000, max: 1 });
+  const cfg = makeCfg({
+    flags: flagsOff(['signups.new']) as never,
+    limiters: { read: limiter, write: limiter, auth: limiter },
+  });
+  const call = () => guard(req('POST', { origin: ORIGIN, body: {} }), cfg,
+    { requireAuth: false, limit: 'write', requireFlag: 'signups.new' });
+
+  await expectError(call, 503, 'first call: switch');
+  await expectError(call, 429, 'second call: the limiter still counted the first');
+});
+
+test('guard: with no flag reader wired, the registry fail-safe applies', async () => {
+  // Not the same situation as the store being down, but the honest answer is
+  // the same one: we cannot read the flag, so use the value chosen for that.
+  const cfg = makeCfg();  // no `flags`
+
+  // signups.new fails OPEN — a deployment without the flags module must not
+  // have registration closed.
+  const { ctx } = await guard(req('POST', { origin: ORIGIN, body: {} }), cfg,
+    { requireAuth: false, limit: 'write', requireFlag: 'signups.new' });
+  assert.equal(ctx.principal, null);
+
+  // channel.email fails CLOSED, for the same asymmetry the registry states.
+  await expectError(
+    () => guard(req('POST', { origin: ORIGIN, body: {} }), cfg,
+      { requireAuth: false, limit: 'write', requireFlag: 'channel.email' }),
+    503,
+    'a money/mail flag with no reader',
+  );
+});
+
+test('guard: a role gate and a kill switch cannot be combined at all', async () => {
+  // The two rules collide and no ordering satisfies both: a role-gated route
+  // must answer 404 so a stranger cannot tell it exists, while a switched-off
+  // route answers 503, which says it does. Rather than pick, the combination
+  // is a type error — no admin route is ever flag-gated, because a switch
+  // that can disable its own off-switch is a trap.
+  //
+  // `typecheck:offline` covers this file, so the directive below IS the
+  // assertion: if the combination ever becomes legal, TypeScript reports the
+  // unused @ts-expect-error and the gate goes red.
+  const { m, cfg: base } = sessionAs('user');
+  const cfg = { ...base, flags: flagsOff(['listings.new']) as never };
+  const both = {
+    requireAuth: true, limit: 'read' as const,
+    requireRole: ['admin'] as const, requireFlag: 'listings.new' as const,
+  };
+  await expectError(
+    // @ts-expect-error requireRole and requireFlag are mutually exclusive
+    () => guard(asRole(m), cfg, both),
+    404,
+    'a role gate must still win if the combination is ever forced past the type',
+  );
+});
+
+// ── scheduled jobs ──────────────────────────────────────────────────────────
+
+test('the alerts job refuses everything when no secret is configured', async () => {
+  // The safe direction. A deployment that forgot to set CRON_SECRET does not
+  // run alerts, rather than running them for whoever finds the path — and this
+  // is a job that mails several thousand people.
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  let ran = false;
+  const app = {
+    env: {},
+    savedSearches: { async runAlerts() { ran = true; return { considered: 0, sent: 0 }; } },
+  } as never;
+
+  const res = await runAlerts(
+    new Request('https://portage.ca/api/jobs/alerts', {
+      method: 'POST', headers: { 'x-portage-cron': 'anything' },
+    }),
+    app,
+  );
+  assert.equal(res.status, 404);
+  assert.equal(ran, false);
+});
+
+test('the alerts job answers 404 to a wrong secret, not 401', async () => {
+  // Probing the path must teach nothing about whether it exists — the same
+  // rule the admin routes follow.
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  let ran = false;
+  const app = {
+    env: { cronSecret: 'a-long-enough-cron-secret-value' },
+    savedSearches: { async runAlerts() { ran = true; return { considered: 0, sent: 0 }; } },
+  } as never;
+
+  for (const presented of ['', 'wrong', 'a-long-enough-cron-secret-valu']) {
+    const res = await runAlerts(
+      new Request('https://portage.ca/api/jobs/alerts', {
+        method: 'POST',
+        ...(presented ? { headers: { 'x-portage-cron': presented } } : {}),
+      }),
+      app,
+    );
+    assert.equal(res.status, 404, `"${presented}" should not be accepted`);
+  }
+  assert.equal(ran, false);
+});
+
+test('the alerts job runs for the right secret', async () => {
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  const secret = 'a-long-enough-cron-secret-value';
+  let ran = false;
+  const app = {
+    env: { cronSecret: secret, publicOrigin: 'https://portage.ca' },
+    notify: {},
+    cfg: { allowedOrigins: ['https://portage.ca'] },
+    hsts: false,
+    savedSearches: {
+      async runAlerts(deps: { origin: string }) {
+        ran = true;
+        assert.equal(deps.origin, 'https://portage.ca', 'links in an email need an absolute origin');
+        return { considered: 3, sent: 1 };
+      },
+    },
+  } as never;
+
+  const res = await runAlerts(
+    new Request('https://portage.ca/api/jobs/alerts', {
+      method: 'POST', headers: { 'x-portage-cron': secret },
+    }),
+    app,
+  );
+  assert.equal(res.status, 200);
+  assert.equal(ran, true);
+  assert.deepEqual(await res.json(), { considered: 3, sent: 1 });
+});
+
+test('the alerts job accepts the Bearer header Vercel Cron actually sends', async () => {
+  // The contract is Vercel's, not ours, and getting it wrong is silent: the
+  // scheduler calls every hour and is refused every hour, with nothing in the
+  // product to show for it. Vercel sends a GET with
+  // `Authorization: Bearer $CRON_SECRET`.
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  const secret = 'a-long-enough-cron-secret-value';
+  let ran = false;
+  const app = {
+    env: { cronSecret: secret, publicOrigin: 'https://portage.ca' },
+    notify: {},
+    cfg: { allowedOrigins: ['https://portage.ca'] },
+    hsts: false,
+    savedSearches: { async runAlerts() { ran = true; return { considered: 0, sent: 0 }; } },
+  } as never;
+
+  const res = await runAlerts(
+    new Request('https://portage.ca/api/jobs/alerts', {
+      headers: { authorization: `Bearer ${secret}` },
+    }),
+    app,
+  );
+  assert.equal(res.status, 200);
+  assert.equal(ran, true);
+});
+
+test('a Bearer header with the wrong secret is still refused', async () => {
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  let ran = false;
+  const app = {
+    env: { cronSecret: 'a-long-enough-cron-secret-value' },
+    savedSearches: { async runAlerts() { ran = true; return { considered: 0, sent: 0 }; } },
+  } as never;
+
+  for (const header of ['Bearer wrong', 'Bearer ', 'Basic a-long-enough-cron-secret-value']) {
+    const res = await runAlerts(
+      new Request('https://portage.ca/api/jobs/alerts', { headers: { authorization: header } }),
+      app,
+    );
+    assert.equal(res.status, 404, `"${header}" should not be accepted`);
+  }
+  assert.equal(ran, false);
+});
+
+test('the cron path is registered for GET, or the scheduler never reaches it', async () => {
+  // Vercel Cron sends GET. A route registered only for POST is a job that
+  // never runs and never errors — the failure this test exists to prevent is
+  // an empty inbox nobody can explain.
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/index.ts', import.meta.url).pathname, 'utf8');
+  assert.match(src, /route\('GET', '\/api\/jobs\/alerts'/);
+});
+
+test('the cron config points at a path the router actually serves', async () => {
+  // A vercel.json naming a path that does not exist is a job that 404s every
+  // hour in a dashboard nobody opens. Cheap to check, and the two files are
+  // edited by different hands.
+  const { readFile } = await import('node:fs/promises');
+  const cfg = JSON.parse(await readFile(
+    new URL('../examples/nextjs/vercel.json', import.meta.url).pathname, 'utf8',
+  )) as { crons: Array<{ path: string; schedule: string }> };
+  const routes = await readFile(new URL('../src/index.ts', import.meta.url).pathname, 'utf8');
+
+  assert.ok(cfg.crons.length > 0, 'expected at least one cron entry');
+  for (const c of cfg.crons) {
+    assert.ok(
+      routes.includes(`route('GET', '${c.path}'`),
+      `vercel.json schedules ${c.path}, which has no GET route`,
+    );
+    // Five fields, UTC. Vercel takes no timezone, so a schedule written for a
+    // local time is wrong in a way nothing reports.
+    assert.equal(
+      c.schedule.trim().split(/\s+/).length, 5,
+      `${c.path}: "${c.schedule}" is not a 5-field cron expression`,
+    );
+  }
+});
+
+test('every job route is actually scheduled', async () => {
+  // The reverse of the check above, and the one that matters more. A job
+  // endpoint nobody schedules is a method that exists, is tested, is
+  // reachable, and never runs — which is exactly the state expireStale and
+  // collectExpired were in before this. A route registered and forgotten
+  // looks identical to a route that works.
+  const { readFile } = await import('node:fs/promises');
+  const routes = await readFile(new URL('../src/index.ts', import.meta.url).pathname, 'utf8');
+  const cfg = JSON.parse(await readFile(
+    new URL('../examples/nextjs/vercel.json', import.meta.url).pathname, 'utf8',
+  )) as { crons: Array<{ path: string }> };
+
+  const scheduled = new Set(cfg.crons.map((c) => c.path));
+  const jobPaths = [...routes.matchAll(/route\('GET', '(\/api\/jobs\/[^']+)'/g)]
+    .map((m) => m[1]!);
+
+  assert.ok(jobPaths.length >= 3, `expected several job routes, saw ${jobPaths.length}`);
+  const unscheduled = jobPaths.filter((p) => !scheduled.has(p));
+  assert.deepEqual(unscheduled, [], `job routes nothing ever calls: ${unscheduled.join(', ')}`);
+});
+
+test('the cron runs often enough for the shortest alert frequency it promises', async () => {
+  // `instant` is offered in the UI and means "at most once an hour" in the
+  // service. A daily cron would make that setting a lie — the kind that is
+  // invisible until someone asks why their instant alerts arrive at 3am.
+  const { readFile } = await import('node:fs/promises');
+  const { INTERVAL_HOURS } = await import('../src/modules/search/saved.js');
+  const cfg = JSON.parse(await readFile(
+    new URL('../examples/nextjs/vercel.json', import.meta.url).pathname, 'utf8',
+  )) as { crons: Array<{ path: string; schedule: string }> };
+
+  const alerts = cfg.crons.find((c) => c.path === '/api/jobs/alerts');
+  assert.ok(alerts, 'the alerts job should be scheduled');
+  const [minute, hour] = alerts!.schedule.trim().split(/\s+/);
+
+  const shortest = Math.min(...Object.values(INTERVAL_HOURS));
+  assert.equal(shortest, 1, 'the shortest frequency is hourly');
+  assert.equal(hour, '*', `the schedule must run every hour, got "${alerts!.schedule}"`);
+  assert.match(minute!, /^\d+$/, 'and once within that hour, at a fixed minute');
+});
+
+test('every job endpoint is behind the same secret, with no exceptions', async () => {
+  // Three jobs now, and the third one somebody adds is the one that forgets
+  // the gate. Checked as a set rather than one by one.
+  const jobs = await import('../src/http/routes/jobs.js');
+  const app = {
+    env: {},
+    savedSearches: { async runAlerts() { return { considered: 0, sent: 0 }; } },
+    listings: { async expireStale() { return 0; } },
+    documents: { async purgeExpired() { return { purged: 0, failed: 0 }; } },
+  } as never;
+
+  const handlers = Object.entries(jobs).filter(([, v]) => typeof v === 'function');
+  assert.ok(handlers.length >= 3, `expected several job handlers, saw ${handlers.length}`);
+
+  for (const [name, handler] of handlers) {
+    const res = await (handler as (r: Request, a: unknown) => Promise<Response>)(
+      new Request('https://portage.ca/api/jobs/x', {
+        headers: { authorization: 'Bearer guess' },
+      }),
+      app,
+    );
+    assert.equal(res.status, 404, `${name} accepted a wrong secret`);
+  }
+});
+
+test('every scheduled job reports what it did', async () => {
+  // A scheduler dashboard records a status code and nothing else. "It ran"
+  // and "it did something" are different questions, and the second one is
+  // the one asked when a listing is still live six months later.
+  const { expireListings, purgeDocuments } = await import('../src/http/routes/jobs.js');
+  const secret = 'a-long-enough-cron-secret-value';
+  const app = {
+    env: { cronSecret: secret },
+    cfg: { allowedOrigins: [] },
+    hsts: false,
+    listings: { async expireStale(limit: number) { assert.ok(limit > 0); return 7; } },
+    documents: { async purgeExpired() { return { purged: 3, failed: 1 }; } },
+  } as never;
+  const req = () => new Request('https://portage.ca/api/jobs/x', {
+    headers: { authorization: `Bearer ${secret}` },
+  });
+
+  assert.deepEqual(await (await expireListings(req(), app)).json(), { expired: 7 });
+  assert.deepEqual(await (await purgeDocuments(req(), app)).json(), { purged: 3, failed: 1 });
 });

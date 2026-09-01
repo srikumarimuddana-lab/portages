@@ -438,6 +438,33 @@ test('documents: deleted document is inaccessible even to its owner', () => {
   assert.equal(canAccess({ requesterId: 'u1', ownerId: 'u1', deletedAt: new Date() }), false);
 });
 
+test('documents: a tombstone is inaccessible to everyone, share or no share', () => {
+  // A NULL owner means the account was erased (migration 019). The row lives
+  // on only so the append-only access log has something to point at, until
+  // the nightly purge destroys the bytes — during which window it is still a
+  // real document with real bytes, and `assertAccess` finds it by id with no
+  // owner filter. Nobody may read it.
+  //
+  // The live share is the case that matters: shares are cascade-deleted with
+  // the account that granted them, so this state should not arise — and the
+  // assertion is here precisely so access does not *depend* on that cascade
+  // holding. Third assertion: not even someone whose own id is somehow absent.
+  assert.equal(canAccess({ requesterId: 'u1', ownerId: null, deletedAt: null }), false);
+  assert.equal(
+    canAccess({
+      requesterId: 'u2', ownerId: null, deletedAt: null,
+      share: { expiresAt: new Date(Date.now() + 60_000), revokedAt: null },
+    }),
+    false,
+    'a share must not outlive the account that granted it',
+  );
+  assert.equal(
+    canAccess({ requesterId: null as unknown as string, ownerId: null, deletedAt: null }),
+    false,
+    'and NULL must never equal NULL into access',
+  );
+});
+
 test('documents: retention date is set forward by kind', () => {
   const now = new Date('2026-01-01T00:00:00Z');
   assert.ok(retentionFor('agreement', now) > now);

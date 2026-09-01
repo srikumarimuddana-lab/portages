@@ -1,0 +1,290 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800;900&display=swap">
+  <style>
+    body { margin: 0; font-family: "Golos Text", system-ui, sans-serif; color: #0b0d12; background: #fafbfe; }
+    a { color: #356dbe; text-decoration: none; }
+    a:hover { color: #24528f; }
+    h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+    p { margin: 0; }
+    svg { display: block; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 390px; background: #fafbfe; font-family: 'Golos Text', system-ui, sans-serif; padding-bottom: 96px; position: relative;">
+
+  <!-- gallery -->
+  <div style="height: 260px; background: linear-gradient(140deg, #d5e3f7, #b3cdf0); display: flex; align-items: flex-end; justify-content: flex-end; padding: 14px;">
+    <span style="padding: 7px 14px; border-radius: 999px; background: rgba(11,13,18,0.72); color: #ffffff; font-size: 12px; font-weight: 700;">1 / 9</span>
+  </div>
+
+  <!-- hero -->
+  <div style="display: flex; flex-direction: column; gap: 12px; padding: 20px 18px 0 18px;">
+    <div style="display: flex; align-items: baseline; gap: 10px;">
+      <span style="font-size: 30px; font-weight: 900; letter-spacing: -0.02em;">$1,450</span>
+      <span style="font-size: 14px; font-weight: 600; color: #7b8698;">/month</span>
+    </div>
+    <h1 style="font-size: 18px; color: #12151c; line-height: 1.3;">2 bed · 1 bath · 880 sq ft</h1>
+    <p style="font-size: 14px; color: #7b8698; line-height: 1.4;">2100 Victoria Avenue<br>Cathedral, Regina SK</p>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 7px; padding-top: 2px;">
+      <div style="display: flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 999px; background: oklch(0.95 0.045 155); color: oklch(0.42 0.12 155); font-size: 12px; font-weight: 700;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        0% commission
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 999px; background: #eaf1fb; color: #24528f; font-size: 12px; font-weight: 700;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.4 9.1 8 10 4.6-.9 8-5 8-10V6z"/><path d="m9 12 2 2 4-4"/></svg>
+        Verified owner
+      </div>
+    </div>
+  </div>
+
+  <!-- tabs: horizontally scrollable, the phone pattern -->
+  <div style="display: flex; gap: 3px; padding: 4px; margin: 18px 18px 0 18px; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 999px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+    <sc-for list="{{tabs}}" as="tab" hint-placeholder-count="3">
+      <button onClick="{{tab.pick}}" style="{{tab.style}}">{{tab.label}}</button>
+    </sc-for>
+  </div>
+
+  <sc-if value="{{isOverview}}" hint-placeholder-val="{{true}}">
+  <div style="display: flex; flex-direction: column; gap: 14px; padding: 16px 18px 0 18px;">
+
+    <!-- key facts, two up -->
+    <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 20px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px;">
+        <sc-for list="{{facts}}" as="f" hint-placeholder-count="6">
+          <div style="display: flex; align-items: flex-start; gap: 11px;">
+            <div style="width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: {{f.tint}}; color: {{f.ink}};">
+              <dc-import name="Icon" glyph="{{f.icon}}" size="{{19}}" hint-size="19px,19px"></dc-import>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 1px;">
+              <span style="font-size: 11px; font-weight: 600; color: #9aa4b5;">{{f.label}}</span>
+              <span style="font-size: 14px; font-weight: 700; color: #12151c;">{{f.value}}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- chips -->
+    <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 20px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+      <h2 style="font-size: 15px; margin-bottom: 14px;">What stands out</h2>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <sc-for list="{{highlights}}" as="h" hint-placeholder-count="6">
+          <div style="display: flex; align-items: center; gap: 6px; padding: 8px 13px; border-radius: 999px; background: {{h.tint}}; color: {{h.ink}}; font-size: 12px; font-weight: 700;">
+            <dc-import name="Icon" glyph="{{h.icon}}" size="{{14}}" hint-size="14px,14px"></dc-import>
+            {{h.label}}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- about -->
+    <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 20px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+      <h2 style="font-size: 15px; margin-bottom: 10px;">About this place</h2>
+      <p style="font-size: 14px; line-height: 1.6; color: #5b6575; text-wrap: pretty;">A well-kept upper unit in a 1928 character home, two blocks from 13th Avenue. Heat and water are included; the heated garage stall has a block-heater plug, which matters here from November.</p>
+      <a href="#" style="display: inline-block; margin-top: 10px; font-size: 13px; font-weight: 700;">Read more ›</a>
+    </div>
+
+    <!-- amenities, three up -->
+    <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 20px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+      <h2 style="font-size: 15px; margin-bottom: 16px;">Amenities</h2>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 8px;">
+        <sc-for list="{{amenities}}" as="a" hint-placeholder-count="6">
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;">
+            <div style="width: 46px; height: 46px; border-radius: 15px; display: flex; align-items: center; justify-content: center; background: {{a.tint}}; color: {{a.ink}};">
+              <dc-import name="Icon" glyph="{{a.icon}}" size="{{21}}" hint-size="21px,21px"></dc-import>
+            </div>
+            <span style="font-size: 11px; font-weight: 600; color: #5b6575; line-height: 1.3;">{{a.label}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{isArea}}" hint-placeholder-val="{{false}}">
+  <div style="display: flex; flex-direction: column; gap: 14px; padding: 16px 18px 0 18px;">
+    <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 20px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+      <h2 style="font-size: 15px; margin-bottom: 14px;">Cathedral</h2>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+        <sc-for list="{{scores}}" as="s" hint-placeholder-count="4">
+          <div style="display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 14px; background: {{s.tint}};">
+            <div style="display: flex; align-items: center; gap: 7px; color: {{s.ink}};">
+              <dc-import name="Icon" glyph="{{s.icon}}" size="{{16}}" hint-size="16px,16px"></dc-import>
+              <span style="font-size: 12px; font-weight: 700;">{{s.label}}</span>
+            </div>
+            <span style="font-size: 24px; font-weight: 900; color: {{s.ink}}; letter-spacing: -0.02em;">{{s.value}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 20px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+      <h2 style="font-size: 15px; margin-bottom: 12px;">What is nearby</h2>
+      <div style="display: flex; flex-direction: column;">
+        <sc-for list="{{nearby}}" as="n" hint-placeholder-count="5">
+          <div style="display: flex; align-items: center; gap: 11px; padding: 11px 0; border-bottom: 1px solid #f8f9fb;">
+            <div style="width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: {{n.tint}}; color: {{n.ink}};">
+              <dc-import name="Icon" glyph="{{n.icon}}" size="{{16}}" hint-size="16px,16px"></dc-import>
+            </div>
+            <span style="font-size: 13px; font-weight: 600; color: #3c4454; flex-grow: 1; line-height: 1.35;">{{n.label}}</span>
+            <span style="font-size: 12px; font-weight: 700; color: #9aa4b5;">{{n.distance}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{isTerms}}" hint-placeholder-val="{{false}}">
+  <div style="display: flex; flex-direction: column; gap: 14px; padding: 16px 18px 0 18px;">
+    <div style="background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 20px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+      <h2 style="font-size: 15px; margin-bottom: 16px;">Lease terms</h2>
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <sc-for list="{{terms}}" as="t" hint-placeholder-count="5">
+          <div style="display: flex; align-items: flex-start; gap: 11px;">
+            <div style="width: 36px; height: 36px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: {{t.tint}}; color: {{t.ink}};">
+              <dc-import name="Icon" glyph="{{t.icon}}" size="{{18}}" hint-size="18px,18px"></dc-import>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 1px;">
+              <span style="font-size: 11px; font-weight: 600; color: #9aa4b5;">{{t.label}}</span>
+              <span style="font-size: 14px; font-weight: 700; color: #12151c;">{{t.value}}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 12px; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 20px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+      <div style="width: 36px; height: 36px; border-radius: 12px; background: oklch(0.95 0.045 155); color: oklch(0.42 0.12 155); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.4 9.1 8 10 4.6-.9 8-5 8-10V6z"/><path d="m9 12 2 2 4-4"/></svg>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 5px;">
+        <h3 style="font-size: 14px;">Everyone may apply</h3>
+        <p style="font-size: 13px; line-height: 1.55; color: #5b6575;">Portage carries no tenant-preference field. Saskatchewan human rights law prohibits refusing housing on family status, sex, marital status, age or source of income.</p>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- sticky action bar. 52px tall controls, above the 44px floor. -->
+  <div style="position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; margin-top: 20px; padding: 14px 18px 18px 18px; background: rgba(255,255,255,0.94); border-top: 1px solid #e6e8ee; backdrop-filter: blur(8px);">
+    <button style="width: 52px; height: 52px; flex-shrink: 0; border-radius: 999px; border: 1px solid #dde1e9; background: #ffffff; color: #5b6575; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.5-1.5 3-3.3 3-5.5A5.5 5.5 0 0 0 12 5.4 5.5 5.5 0 0 0 2 8.5c0 2.2 1.5 4 3 5.5l7 7z"/></svg>
+    </button>
+    <button style="flex-grow: 1; height: 52px; border-radius: 999px; border: none; background: {{accent}}; color: #ffffff; font-family: inherit; font-size: 15px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg>
+      Message the owner
+    </button>
+  </div>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "accent": {"editor": "color", "default": "#356dbe", "options": ["#356dbe", "#2f6f5e", "#8a4b8f", "#b4542a"], "section": "Theme"},
+  "$preview": {"width": 390, "height": 1580}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tab: 'overview' };
+  }
+
+  palette(hue) {
+    return { tint: 'oklch(0.95 0.045 ' + hue + ')', ink: 'oklch(0.44 0.125 ' + hue + ')' };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#356dbe';
+    const p = (h) => this.palette(h);
+    const BLUE = 250, GREEN = 155, AMBER = 75, VIOLET = 300, TEAL = 195, ROSE = 20;
+
+    const tabs = [
+      { id: 'overview', label: 'Overview' },
+      { id: 'area', label: 'Area' },
+      { id: 'terms', label: 'Terms' },
+    ].map((t) => {
+      const active = this.state.tab === t.id;
+      return {
+        id: t.id,
+        label: t.label,
+        pick: () => this.setState({ tab: t.id }),
+        style: 'flex-grow: 1; padding: 9px 12px; font-family: inherit; font-size: 13px;'
+          + ' font-weight: 600; cursor: pointer; border: none; border-radius: 999px;'
+          + (active
+            ? ' background: ' + accent + '; color: #ffffff;'
+            : ' background: transparent; color: #5b6575;'),
+      };
+    });
+
+    return {
+      accent,
+      tabs,
+      isOverview: this.state.tab === 'overview',
+      isArea: this.state.tab === 'area',
+      isTerms: this.state.tab === 'terms',
+
+      facts: [
+        { icon: 'bed', label: 'Layout', value: '2 bed · 1 bath', ...p(BLUE) },
+        { icon: 'area', label: 'Area', value: '880 sq ft', ...p(TEAL) },
+        { icon: 'calendar', label: 'Available', value: '1 Oct', ...p(GREEN) },
+        { icon: 'sofa', label: 'Furnishing', value: 'Unfurnished', ...p(AMBER) },
+        { icon: 'car', label: 'Parking', value: 'Heated garage', ...p(VIOLET) },
+        { icon: 'file', label: 'Lease', value: '12 months', ...p(ROSE) },
+      ],
+
+      highlights: [
+        { icon: 'flame', label: 'Heat included', ...p(ROSE) },
+        { icon: 'droplet', label: 'Water included', ...p(TEAL) },
+        { icon: 'plug', label: 'Block heater plug', ...p(AMBER) },
+        { icon: 'washer', label: 'In-suite laundry', ...p(BLUE) },
+        { icon: 'paw', label: 'Pets allowed', ...p(GREEN) },
+        { icon: 'sun', label: 'South facing', ...p(AMBER) },
+      ],
+
+      amenities: [
+        { icon: 'washer', label: 'Laundry', ...p(BLUE) },
+        { icon: 'dish', label: 'Dishwasher', ...p(TEAL) },
+        { icon: 'flame', label: 'Heating', ...p(ROSE) },
+        { icon: 'car', label: 'Garage', ...p(VIOLET) },
+        { icon: 'tree', label: 'Fenced yard', ...p(GREEN) },
+        { icon: 'bike', label: 'Bike storage', ...p(BLUE) },
+      ],
+
+      scores: [
+        { icon: 'bus', label: 'Transit', value: '78', ...p(BLUE) },
+        { icon: 'school', label: 'Schools', value: '84', ...p(GREEN) },
+        { icon: 'tree', label: 'Green space', value: '91', ...p(TEAL) },
+        { icon: 'shop', label: 'Amenities', value: '72', ...p(AMBER) },
+      ],
+
+      nearby: [
+        { icon: 'bus', label: '13th Ave & Robinson stop', distance: '2 min', ...p(BLUE) },
+        { icon: 'school', label: 'Connaught Community School', distance: '5 min', ...p(GREEN) },
+        { icon: 'shop', label: '13th Avenue shops', distance: '3 min', ...p(AMBER) },
+        { icon: 'tree', label: 'Wascana Park', distance: '12 min', ...p(TEAL) },
+        { icon: 'cross', label: 'Regina General Hospital', distance: '9 min', ...p(ROSE) },
+      ],
+
+      terms: [
+        { icon: 'calendar', label: 'Lease length', value: '12 months', ...p(BLUE) },
+        { icon: 'wallet', label: 'Security deposit', value: '$725', ...p(GREEN) },
+        { icon: 'flame', label: 'Utilities', value: 'Heat & water included', ...p(ROSE) },
+        { icon: 'paw', label: 'Pets', value: 'Cats and dogs welcome', ...p(VIOLET) },
+        { icon: 'smoke', label: 'Smoking', value: 'Not permitted', ...p(AMBER) },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

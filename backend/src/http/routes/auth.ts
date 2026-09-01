@@ -72,6 +72,10 @@ export async function signup(req: Request, deps: RouteDeps): Promise<Response> {
       requireAuth: false,
       limit: 'auth',
       body: credentials,
+      // Closing registration is the response to a scripted signup flood that
+      // rate limiting alone is not containing. Existing accounts sign in
+      // normally: `login` is deliberately not gated.
+      requireFlag: 'signups.new',
     });
     ctxId = ctx.requestId;
     origin = ctx.origin;

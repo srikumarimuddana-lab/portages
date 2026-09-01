@@ -44,6 +44,16 @@ export interface ResolvedSession {
   csrfHash: Buffer;
   /** Read fresh on every request, so a demotion takes effect at once. */
   role: UserRole;
+  email: string;
+  /**
+   * Whether the address has been confirmed.
+   *
+   * Carried on the session because `publishBlockers` refuses to publish a
+   * listing without it, and a page that cannot see it can only discover the
+   * problem by submitting and being refused. It costs nothing to read: this
+   * query already joins `users`.
+   */
+  emailVerified: boolean;
 }
 
 /** Minimum viable password policy: length over composition rules. */
@@ -168,10 +178,11 @@ export class AuthService {
     const res = await this.#db.query<{
       id: string; user_id: string; csrf_hash: Buffer;
       idle_expires_at: Date; absolute_expires_at: Date; revoked_at: Date | null;
-      role: UserRole; status: string;
+      role: UserRole; status: string; email: string; email_verified_at: Date | null;
     }>(
       `SELECT s.id, s.user_id, s.csrf_hash, s.idle_expires_at,
-              s.absolute_expires_at, s.revoked_at, u.role, u.status
+              s.absolute_expires_at, s.revoked_at, u.role, u.status,
+              u.email, u.email_verified_at
          FROM sessions s
          JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = $1`,
@@ -196,7 +207,10 @@ export class AuthService {
       'UPDATE sessions SET last_seen_at = $2, idle_expires_at = $3 WHERE id = $1',
       [row.id, now, verdict.renewIdleTo],
     );
-    return { userId: row.user_id, sessionId: row.id, csrfHash: row.csrf_hash, role: row.role };
+    return {
+      userId: row.user_id, sessionId: row.id, csrfHash: row.csrf_hash, role: row.role,
+      email: row.email, emailVerified: row.email_verified_at !== null,
+    };
   }
 
   async logout(sessionId: string): Promise<void> {

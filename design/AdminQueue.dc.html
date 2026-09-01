@@ -1,0 +1,226 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800;900&display=swap">
+  <style>
+    body { margin: 0; font-family: "Golos Text", system-ui, sans-serif; color: #0b0d12; background: #f4f5f8; }
+    a { color: #356dbe; text-decoration: none; }
+    a:hover { color: #24528f; }
+    h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+    p { margin: 0; }
+    svg { display: block; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; background: #f4f5f8; padding-bottom: 40px; font-family: 'Golos Text', system-ui, sans-serif;">
+
+  <!-- Staff chrome is visibly not the public site: darker ground, square
+       corners, denser type. Nobody should mistake which one they are in. -->
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 56px; background: #12151c;">
+    <div style="display: flex; align-items: center; gap: 26px;">
+      <span style="font-size: 15px; font-weight: 900; color: #ffffff; letter-spacing: -0.01em;">Portage <span style="color: #7b8698; font-weight: 700;">staff</span></span>
+      <div style="display: flex; gap: 4px;">
+        <sc-for list="{{nav}}" as="n" hint-placeholder-count="5">
+          <button onClick="{{n.pick}}" style="{{n.style}}">{{n.label}}<sc-if value="{{n.hasCount}}" hint-placeholder-val="{{true}}"><span style="{{n.countStyle}}">{{n.count}}</span></sc-if></button>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <span style="font-size: 12px; color: #7b8698;">Signed in as <span style="color: #dde1e9; font-weight: 600;">k.reddy · staff</span></span>
+      <div style="width: 30px; height: 30px; border-radius: 8px; background: #3c4454; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800;">KR</div>
+    </div>
+  </div>
+
+  <!-- ── queue health strip ────────────────────────────────────────── -->
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 20px 28px 0 28px;">
+    <sc-for list="{{health}}" as="h" hint-placeholder-count="4">
+      <div style="display: flex; align-items: center; gap: 14px; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; padding: 16px 18px;">
+        <div style="width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: {{h.tint}}; color: {{h.ink}};">
+          <dc-import name="Icon" glyph="{{h.icon}}" size="{{19}}" hint-size="19px,19px"></dc-import>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 1px;">
+          <span style="font-size: 22px; font-weight: 900; letter-spacing: -0.02em; color: {{h.valueInk}};">{{h.value}}</span>
+          <span style="font-size: 11px; font-weight: 600; color: #7b8698;">{{h.label}}</span>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- ── the queue ─────────────────────────────────────────────────── -->
+  <div style="margin: 20px 28px 0 28px; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 12px; overflow: hidden;">
+
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #eef0f4;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <h1 style="font-size: 17px;">Moderation queue</h1>
+        <span style="font-size: 12px; color: #7b8698;">Ordered by risk, then age — the index this table is built on</span>
+      </div>
+      <div style="display: flex; gap: 3px; padding: 3px; background: #f4f5f8; border-radius: 8px;">
+        <sc-for list="{{filters}}" as="f" hint-placeholder-count="3">
+          <button onClick="{{f.pick}}" style="{{f.style}}">{{f.label}}</button>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- header row -->
+    <div style="display: grid; grid-template-columns: 92px 1fr 300px 108px 132px; gap: 16px; padding: 10px 20px; background: #fafbfe; border-bottom: 1px solid #eef0f4;">
+      <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">RISK</span>
+      <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">SUBJECT</span>
+      <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">WHY IT IS HERE</span>
+      <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;">WAITING</span>
+      <span style="font-size: 11px; font-weight: 700; color: #9aa4b5;"></span>
+    </div>
+
+    <sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+      <div style="display: grid; grid-template-columns: 92px 1fr 300px 108px 132px; gap: 16px; align-items: center; padding: 14px 20px; border-bottom: 1px solid #f8f9fb;">
+
+        <div style="{{r.scoreStyle}}">{{r.score}}</div>
+
+        <div style="display: flex; align-items: center; gap: 11px; min-width: 0;">
+          <div style="width: 32px; height: 32px; flex-shrink: 0; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: {{r.kindTint}}; color: {{r.kindInk}};">
+            <dc-import name="Icon" glyph="{{r.kindIcon}}" size="{{16}}" hint-size="16px,16px"></dc-import>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+            <span style="font-size: 13px; font-weight: 700; color: #12151c;">{{r.title}}</span>
+            <span style="font-size: 11px; color: #7b8698;">{{r.subtitle}}</span>
+          </div>
+        </div>
+
+        <!-- Signal NAMES, not just a number. A bad rule is only findable if
+             it is on the screen. -->
+        <div style="display: flex; flex-wrap: wrap; gap: 5px;">
+          <sc-for list="{{r.signals}}" as="s" hint-placeholder-count="2">
+            <span style="padding: 3px 9px; border-radius: 6px; background: {{s.tint}}; color: {{s.ink}}; font-size: 11px; font-weight: 700; font-family: ui-monospace, Menlo, monospace;">{{s.label}}</span>
+          </sc-for>
+        </div>
+
+        <span style="{{r.ageStyle}}">{{r.age}}</span>
+
+        <div style="display: flex; gap: 6px; justify-content: flex-end;">
+          <button style="padding: 7px 13px; border-radius: 7px; border: 1px solid #dde1e9; background: #ffffff; color: #3c4454; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;">Open</button>
+          <button style="padding: 7px 13px; border-radius: 7px; border: none; background: {{accent}}; color: #ffffff; font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;">Review</button>
+        </div>
+      </div>
+    </sc-for>
+
+    <!-- No bulk actions, deliberately: at 2-5 decisions a day each one is
+         read, and a select-all is a feature for a queue nobody reads. -->
+    <div style="display: flex; align-items: center; gap: 9px; padding: 14px 20px; background: #fafbfe;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa4b5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+      <span style="font-size: 12px; color: #7b8698;">Roughly three items a day at Regina scale. Every one gets opened — there is no bulk approve.</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "accent": {"editor": "color", "default": "#356dbe", "options": ["#356dbe", "#2f6f5e", "#8a4b8f", "#b4542a"], "section": "Theme"},
+  "$preview": {"width": 1440, "height": 820}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { nav: 'queue', filter: 'all' };
+  }
+
+  palette(hue) {
+    return { tint: 'oklch(0.95 0.045 ' + hue + ')', ink: 'oklch(0.44 0.125 ' + hue + ')' };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#356dbe';
+    const p = (h) => this.palette(h);
+    const BLUE = 250, GREEN = 155, AMBER = 75, VIOLET = 300, TEAL = 195, ROSE = 20;
+
+    const nav = [
+      { id: 'queue', label: 'Queue', count: 7, hasCount: true },
+      { id: 'reports', label: 'Reports', count: 2, hasCount: true },
+      { id: 'listings', label: 'Listings', hasCount: false, count: 0 },
+      { id: 'users', label: 'Users', hasCount: false, count: 0 },
+      { id: 'ops', label: 'Ops', hasCount: false, count: 0 },
+    ].map((n) => {
+      const active = this.state.nav === n.id;
+      return {
+        ...n,
+        pick: () => this.setState({ nav: n.id }),
+        style: 'display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px;'
+          + ' font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;'
+          + ' border: none; border-radius: 8px;'
+          + (active ? ' background: #3c4454; color: #ffffff;'
+                    : ' background: transparent; color: #9aa4b5;'),
+        countStyle: 'padding: 1px 6px; border-radius: 5px; font-size: 11px; font-weight: 800;'
+          + ' background: ' + accent + '; color: #ffffff;',
+      };
+    });
+
+    // Oldest-item age leads, because at this volume the failure is a queue
+    // nobody opened for a week — not a queue that is too deep.
+    const health = [
+      { icon: 'file', label: 'Open in queue', value: '7', valueInk: '#12151c', ...p(BLUE) },
+      { icon: 'calendar', label: 'Oldest waiting', value: '19h', valueInk: this.palette(AMBER).ink, ...p(AMBER) },
+      { icon: 'home', label: 'Listings pending', value: '4', valueInk: '#12151c', ...p(GREEN) },
+      { icon: 'smoke', label: 'Blocked messages, 7d', value: '11', valueInk: '#12151c', ...p(ROSE) },
+    ];
+
+    const filters = [
+      { id: 'all', label: 'All' },
+      { id: 'listings', label: 'Listings' },
+      { id: 'messages', label: 'Messages' },
+    ].map((f) => ({
+      ...f,
+      pick: () => this.setState({ filter: f.id }),
+      style: 'padding: 6px 13px; font-family: inherit; font-size: 12px; font-weight: 600;'
+        + ' cursor: pointer; border: none; border-radius: 6px;'
+        + (this.state.filter === f.id ? ' background: #ffffff; color: #12151c; box-shadow: 0 1px 3px rgba(16,24,40,0.1);'
+                                      : ' background: transparent; color: #7b8698;'),
+    }));
+
+    const scorePill = (score) => {
+      const hue = score >= 100 ? ROSE : score >= 60 ? AMBER : score >= 30 ? VIOLET : TEAL;
+      const t = this.palette(hue);
+      return 'display: inline-flex; align-items: center; justify-content: center; width: 46px;'
+        + ' padding: 6px 0; border-radius: 7px; font-size: 14px; font-weight: 900;'
+        + ' background: ' + t.tint + '; color: ' + t.ink + ';';
+    };
+
+    const rows = [
+      { score: 130, title: 'Message from Jordan W.', subtitle: 'thread · 2100 Victoria Ave',
+        kindIcon: 'smoke', ...{ kindTint: p(ROSE).tint, kindInk: p(ROSE).ink },
+        signals: [{ label: 'payment_before_viewing', ...p(ROSE) }], age: '19h', old: true },
+      { score: 105, title: 'Message from an unverified account', subtitle: 'thread · 58 Angus Cres',
+        kindIcon: 'smoke', kindTint: p(ROSE).tint, kindInk: p(ROSE).ink,
+        signals: [{ label: 'absent_landlord_script', ...p(ROSE) }, { label: 'contact_details_phone', ...p(AMBER) }],
+        age: '6h', old: false },
+      { score: 37, title: '4412 Rae St · Cathedral', subtitle: 'listing · $650/mo · 2 bed',
+        kindIcon: 'home', kindTint: p(AMBER).tint, kindInk: p(AMBER).ink,
+        signals: [{ label: 'implausibly_low_price', ...p(AMBER) }, { label: 'shouting_title', ...p(VIOLET) }],
+        age: '11h', old: false },
+      { score: 32, title: 'Message from Priya K.', subtitle: 'thread · 2100 Victoria Ave',
+        kindIcon: 'smoke', kindTint: p(AMBER).tint, kindInk: p(AMBER).ink,
+        signals: [{ label: 'contact_details_email', ...p(AMBER) }], age: '5h', old: false },
+      { score: 12, title: '3125 13th Ave · Cathedral', subtitle: 'listing · $1,195/mo · 1 bed',
+        kindIcon: 'home', kindTint: p(TEAL).tint, kindInk: p(TEAL).ink,
+        signals: [{ label: 'contact_phone_in_body', ...p(TEAL) }], age: '4h', old: false },
+      { score: 0, title: '58 Angus Cres · Lakeview', subtitle: 'listing · $1,800/mo · 3 bed',
+        kindIcon: 'home', kindTint: p(GREEN).tint, kindInk: p(GREEN).ink,
+        signals: [{ label: 'owner_submitted', ...p(GREEN) }], age: '2h', old: false },
+    ].map((r) => ({
+      ...r,
+      scoreStyle: scorePill(r.score),
+      // Age is coloured, not the score — an item aging is the thing that
+      // actually goes wrong here.
+      ageStyle: 'font-size: 13px; font-weight: 700;'
+        + (r.old ? ' color: ' + this.palette(AMBER).ink + ';' : ' color: #7b8698;'),
+    }));
+
+    return { accent, nav, health, filters, rows };
+  }
+}
+</script>
+</body>
+</html>

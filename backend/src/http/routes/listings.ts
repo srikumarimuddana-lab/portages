@@ -141,6 +141,10 @@ export async function createListing(req: Request, deps: ListingRouteDeps): Promi
   try {
     const { ctx, body } = await guard<CreateBody>(req, deps.cfg, {
       requireAuth: true, limit: 'write', body: createBody,
+      // Only creation. Editing, submitting and publishing an existing listing
+      // stay open, so throwing this switch does not strand an owner halfway
+      // through work they have already started.
+      requireFlag: 'listings.new',
     });
     id = ctx.requestId; origin = ctx.origin;
 
@@ -234,6 +238,10 @@ export async function addPhoto(req: Request, listingId: string, deps: ListingRou
   try {
     const { ctx, body } = await guard<{ mime: string; bytes: number; kind?: never }>(req, deps.cfg, {
       requireAuth: true, limit: 'write', body: photoBody,
+      // Ticket issuance only. `completeUpload` is not gated, so a photo whose
+      // bytes are already on their way to the bucket still lands rather than
+      // becoming an orphaned object nobody has a row for.
+      requireFlag: 'uploads.new',
     });
     id = ctx.requestId; origin = ctx.origin;
 

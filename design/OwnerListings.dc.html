@@ -1,0 +1,204 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800;900&display=swap">
+  <style>
+    body { margin: 0; font-family: "Golos Text", system-ui, sans-serif; color: #0b0d12; background: #fafbfe; }
+    a { color: #356dbe; text-decoration: none; }
+    a:hover { color: #24528f; }
+    h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+    p { margin: 0; }
+    svg { display: block; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 1280px; background: #fafbfe; padding-bottom: 40px; font-family: 'Golos Text', system-ui, sans-serif;">
+
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 28px 36px 0 36px;">
+    <div style="display: flex; flex-direction: column; gap: 5px;">
+      <h1 style="font-size: 26px;">Your listings</h1>
+      <p style="font-size: 14px; color: #7b8698;">Four properties · 12 unread enquiries</p>
+    </div>
+    <button style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 999px; border: none; background: {{accent}}; color: #ffffff; font-family: inherit; font-size: 14px; font-weight: 700; cursor: pointer;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      List a property
+    </button>
+  </div>
+
+  <!-- status filter -->
+  <div style="display: flex; gap: 3px; padding: 4px; margin: 20px 36px 0 36px; width: fit-content; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 999px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+    <sc-for list="{{filters}}" as="f" hint-placeholder-count="4">
+      <button onClick="{{f.pick}}" style="{{f.style}}">{{f.label}}<span style="{{f.countStyle}}">{{f.count}}</span></button>
+    </sc-for>
+  </div>
+
+  <!-- listing rows -->
+  <div style="display: flex; flex-direction: column; gap: 12px; padding: 18px 36px 0 36px;">
+    <sc-for list="{{listings}}" as="l" hint-placeholder-count="4">
+      <div style="display: flex; gap: 18px; align-items: center; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 16px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+
+        <div style="width: 124px; height: 88px; flex-shrink: 0; border-radius: 14px; background: {{l.photo}};"></div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px; width: 300px; flex-shrink: 0;">
+          <div style="display: flex; align-items: center; gap: 9px;">
+            <span style="font-size: 17px; font-weight: 800;">{{l.price}}</span>
+            <span style="{{l.statusStyle}}">{{l.status}}</span>
+          </div>
+          <span style="font-size: 13px; color: #7b8698;">{{l.address}}</span>
+          <span style="font-size: 12px; color: #9aa4b5;">{{l.meta}}</span>
+        </div>
+
+        <!-- Performance, so an owner can tell a quiet listing from a broken
+             one. Views without enquiries is a price problem; neither is a
+             photo problem. -->
+        <div style="display: flex; gap: 26px; flex-grow: 1;">
+          <sc-for list="{{l.stats}}" as="s" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <span style="font-size: 19px; font-weight: 800; color: {{s.ink}};">{{s.value}}</span>
+              <span style="font-size: 11px; font-weight: 600; color: #9aa4b5;">{{s.label}}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 7px; align-items: flex-end; flex-shrink: 0;">
+          <sc-if value="{{l.hasNudge}}" hint-placeholder-val="{{true}}">
+            <div style="display: flex; align-items: center; gap: 7px; padding: 8px 13px; border-radius: 999px; background: {{l.nudgeTint}}; color: {{l.nudgeInk}}; font-size: 12px; font-weight: 700;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+              {{l.nudge}}
+            </div>
+          </sc-if>
+          <div style="display: flex; gap: 7px;">
+            <button style="padding: 9px 16px; border-radius: 999px; border: 1px solid #dde1e9; background: #ffffff; color: #3c4454; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;">Edit</button>
+            <button style="{{l.actionStyle}}">{{l.action}}</button>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "accent": {"editor": "color", "default": "#356dbe", "options": ["#356dbe", "#2f6f5e", "#8a4b8f", "#b4542a"], "section": "Theme"},
+  "$preview": {"width": 1280, "height": 700}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { filter: 'all' };
+  }
+
+  palette(hue) {
+    return { tint: 'oklch(0.95 0.045 ' + hue + ')', ink: 'oklch(0.44 0.125 ' + hue + ')' };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#356dbe';
+    const p = (h) => this.palette(h);
+    const BLUE = 250, GREEN = 155, AMBER = 75, TEAL = 195, ROSE = 20;
+
+    const filters = [
+      { id: 'all', label: 'All', count: 4 },
+      { id: 'live', label: 'Live', count: 2 },
+      { id: 'pending', label: 'In review', count: 1 },
+      { id: 'draft', label: 'Drafts', count: 1 },
+    ].map((f) => {
+      const active = this.state.filter === f.id;
+      return {
+        ...f,
+        pick: () => this.setState({ filter: f.id }),
+        style: 'display: inline-flex; align-items: center; gap: 7px; padding: 7px 15px;'
+          + ' font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;'
+          + ' border: none; border-radius: 999px;'
+          + (active ? ' background: ' + accent + '; color: #ffffff;'
+                    : ' background: transparent; color: #5b6575;'),
+        countStyle: 'padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 800;'
+          + (active ? ' background: rgba(255,255,255,0.24); color: #ffffff;'
+                    : ' background: #eef0f4; color: #7b8698;'),
+      };
+    });
+
+    const statusPill = (label, hue) => {
+      const t = this.palette(hue);
+      return 'padding: 4px 11px; border-radius: 999px; font-size: 11px; font-weight: 800;'
+        + ' background: ' + t.tint + '; color: ' + t.ink + ';';
+    };
+
+    const primaryBtn = 'padding: 9px 16px; border-radius: 999px; border: none;'
+      + ' background: ' + accent + '; color: #ffffff; font-family: inherit;'
+      + ' font-size: 13px; font-weight: 700; cursor: pointer;';
+    const quietBtn = 'padding: 9px 16px; border-radius: 999px; border: 1px solid #dde1e9;'
+      + ' background: #ffffff; color: #3c4454; font-family: inherit;'
+      + ' font-size: 13px; font-weight: 600; cursor: pointer;';
+
+    const listings = [
+      {
+        price: '$1,450', status: 'Live', statusStyle: statusPill('Live', GREEN),
+        address: '2100 Victoria Ave · Cathedral', meta: '2 bed · 880 sq ft · published 3 days ago',
+        photo: 'linear-gradient(140deg,#d5e3f7,#b3cdf0)',
+        stats: [
+          { value: '214', label: 'Views', ink: '#12151c' },
+          { value: '9', label: 'Enquiries', ink: '#12151c' },
+          { value: '4', label: 'Unread', ink: this.palette(BLUE).ink },
+        ],
+        hasNudge: false, nudge: '', nudgeTint: '', nudgeInk: '',
+        action: 'Messages', actionStyle: primaryBtn,
+      },
+      {
+        price: '$1,800', status: 'Live', statusStyle: statusPill('Live', GREEN),
+        address: '58 Angus Cres · Lakeview', meta: '3 bed · 1,240 sq ft · published 6 weeks ago',
+        photo: 'linear-gradient(140deg,#f3e6d8,#e6d0b6)',
+        stats: [
+          { value: '862', label: 'Views', ink: '#12151c' },
+          { value: '31', label: 'Enquiries', ink: '#12151c' },
+          { value: '8', label: 'Unread', ink: this.palette(BLUE).ink },
+        ],
+        // Expiry is surfaced to the owner rather than sprung on them, because
+        // a listing that vanishes without warning is how owners stop trusting
+        // the site.
+        hasNudge: true, nudge: 'Expires in 6 days — renew?',
+        nudgeTint: this.palette(AMBER).tint, nudgeInk: this.palette(AMBER).ink,
+        action: 'Renew', actionStyle: primaryBtn,
+      },
+      {
+        price: '$1,195', status: 'In review', statusStyle: statusPill('In review', AMBER),
+        address: '3125 13th Ave · Cathedral', meta: '1 bed · 640 sq ft · submitted 4 hours ago',
+        photo: 'linear-gradient(140deg,#e4ecdd,#cfe0c2)',
+        stats: [
+          { value: '—', label: 'Views', ink: '#c2c9d6' },
+          { value: '—', label: 'Enquiries', ink: '#c2c9d6' },
+          { value: '—', label: 'Unread', ink: '#c2c9d6' },
+        ],
+        hasNudge: true, nudge: 'Usually reviewed within a day',
+        nudgeTint: this.palette(TEAL).tint, nudgeInk: this.palette(TEAL).ink,
+        action: 'Withdraw', actionStyle: quietBtn,
+      },
+      {
+        price: '$975', status: 'Draft', statusStyle: statusPill('Draft', BLUE),
+        address: '1840 Smith St · Downtown', meta: '1 bed · 520 sq ft · started 2 days ago',
+        photo: 'linear-gradient(140deg,#eef0f4,#dde1e9)',
+        stats: [
+          { value: '—', label: 'Views', ink: '#c2c9d6' },
+          { value: '—', label: 'Enquiries', ink: '#c2c9d6' },
+          { value: '—', label: 'Unread', ink: '#c2c9d6' },
+        ],
+        // Exactly what publishBlockers() would return, said before they hit
+        // submit rather than after.
+        hasNudge: true, nudge: 'Add a photo to publish',
+        nudgeTint: this.palette(ROSE).tint, nudgeInk: this.palette(ROSE).ink,
+        action: 'Finish', actionStyle: primaryBtn,
+      },
+    ];
+
+    return { accent, filters, listings };
+  }
+}
+</script>
+</body>
+</html>

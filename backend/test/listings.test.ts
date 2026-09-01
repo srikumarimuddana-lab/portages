@@ -509,6 +509,23 @@ test('service: a live listing is visible to anyone', async () => {
   assert.equal(view.isOwner, false);
 });
 
+test('service: a listing view reads only photos that actually exist', async () => {
+  // A reserved row whose bytes never arrived is not a photo. Including it
+  // renders a broken <img> to every visitor, and tells an owner their listing
+  // has a photo right up until submitting refuses because it has none — which
+  // is the dead end the edit page was built to remove.
+  //
+  // This asserts the QUERY carries the filter; that the filter is what changes
+  // the answer is proved against a real database in test/sql/uploads.sql,
+  // which runs both forms over the same two rows.
+  const { db, listings } = svc();
+  await listings.get('listing-1', OWNER);
+
+  const media = db.sent.find((s) => /SELECT id, listing_id, storage_key/.test(s.text));
+  assert.ok(media, 'the view should read listing_media');
+  assert.match(media!.text, /status = 'stored'/);
+});
+
 test('service: update refuses a listing the caller does not own', async () => {
   const { listings } = svc();
   await assert.rejects(
@@ -776,4 +793,74 @@ test('service: the expiry sweep only touches live and paused listings', async ()
   const sweep = db.sent.find((s) => s.text.includes("SET status = 'expired'"))!;
   assert.match(sweep.text, /status IN \('live','paused'\)/);
   assert.match(sweep.text, /expires_at <= now\(\)/);
+});
+
+// ── the audit trail on staff decisions ──────────────────────────────────────
+//
+// The pair that matters is the decision and its record. These assert the
+// record exists, carries the before state, and is written with the SAME
+// transaction handle as the UPDATE — the audit writer's own tests
+// (test/admin.test.ts) prove what that handle then does.
+
+interface Recorded { entry: Record<string, unknown>; tx: Sql }
+
+function auditingSvc(opts: FakeOpts = {}) {
+  const db = fakeSql(opts);
+  const recorded: Recorded[] = [];
+  const listings = new ListingService(db, 'test-storage-secret', {
+    audit: { async record(tx: Sql, entry) { recorded.push({ entry: entry as never, tx }); } },
+  });
+  return { db, listings, recorded };
+}
+
+test('audit: a staff approval is recorded with the status it came from', async () => {
+  const { listings, recorded } = auditingSvc({
+    listing: { ...defaultListing({}), status: 'pending_review' },
+  });
+  await listings.transition('listing-1', STAFF, 'approve', { ip: '198.51.100.7' });
+
+  assert.equal(recorded.length, 1);
+  assert.deepEqual(recorded[0]!.entry, {
+    actorId: 'staff-1', actorRole: 'staff',
+    action: 'listing.approve', subject: 'listing', subjectId: 'listing-1',
+    before: { status: 'pending_review' },
+    after: { status: 'live' },
+    ip: '198.51.100.7',
+  });
+});
+
+test('audit: a rejection records the reason the owner is shown', async () => {
+  // Without it the trail says a listing was rejected and cannot say why, which
+  // is the one question anyone asks of it later.
+  const { listings, recorded } = auditingSvc({
+    listing: { ...defaultListing({}), status: 'pending_review' },
+  });
+  await listings.transition('listing-1', STAFF, 'reject', {
+    reason: 'The photos are of a different property.',
+  });
+  assert.deepEqual(recorded[0]!.entry.after, {
+    status: 'rejected', reason: 'The photos are of a different property.',
+  });
+});
+
+test('audit: an OWNER action is not a staff decision and is not recorded here', async () => {
+  // An owner submitting, pausing or resuming their own listing is ordinary
+  // use. Recording it would bury the eleven staff decisions a week that the
+  // trail exists for under thousands of rows nobody reads.
+  const { listings, recorded } = auditingSvc({ photoCount: 3 });
+  await listings.transition('listing-1', OWNER, 'submit');
+  assert.equal(recorded.length, 0);
+});
+
+test('audit: the entry is written on the transaction that made the decision', async () => {
+  const { db, listings, recorded } = auditingSvc({
+    listing: { ...defaultListing({}), status: 'pending_review' },
+  });
+  let handedTx: Sql | null = null;
+  const realTransaction = db.transaction.bind(db);
+  db.transaction = async (fn) => realTransaction((tx) => { handedTx = tx; return fn(tx); });
+
+  await listings.transition('listing-1', STAFF, 'approve');
+  assert.ok(handedTx, 'the transition must run in a transaction at all');
+  assert.equal(recorded[0]!.tx, handedTx, 'a record on any other handle can commit without the decision');
 });

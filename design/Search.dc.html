@@ -1,0 +1,248 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800;900&display=swap">
+  <style>
+    body { margin: 0; font-family: "Golos Text", system-ui, sans-serif; color: #0b0d12; background: #fafbfe; }
+    a { color: #356dbe; text-decoration: none; }
+    a:hover { color: #24528f; }
+    h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+    p { margin: 0; }
+    svg { display: block; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 1000px; display: flex; flex-direction: column; background: #fafbfe; font-family: 'Golos Text', system-ui, sans-serif;">
+
+  <!-- ── search bar ────────────────────────────────────────────────── -->
+  <div style="display: flex; align-items: center; gap: 14px; padding: 16px 28px; background: #ffffff; border-bottom: 1px solid #e6e8ee;">
+    <span style="font-size: 19px; font-weight: 900; letter-spacing: -0.02em; color: {{accent}};">Portage</span>
+
+    <div style="display: flex; gap: 3px; padding: 4px; background: #f8f9fb; border: 1px solid #e6e8ee; border-radius: 999px;">
+      <sc-for list="{{modes}}" as="m" hint-placeholder-count="2">
+        <button onClick="{{m.pick}}" style="{{m.style}}">{{m.label}}</button>
+      </sc-for>
+    </div>
+
+    <!-- The autocomplete input. Suggestions come from our own gazetteer,
+         which is why there is no "powered by" line under it. -->
+    <div style="display: flex; align-items: center; gap: 10px; flex-grow: 1; max-width: 460px; padding: 0 16px; height: 44px; background: #ffffff; border: 1px solid #dde1e9; border-radius: 999px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#9aa4b5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span style="font-size: 14px; color: #3c4454; font-weight: 500;">Cathedral, Regina</span>
+    </div>
+
+    <div style="display: flex; gap: 8px; flex-grow: 1;">
+      <sc-for list="{{quickFilters}}" as="q" hint-placeholder-count="4">
+        <div style="{{q.style}}">
+          {{q.label}}
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+      </sc-for>
+    </div>
+
+    <button style="display: inline-flex; align-items: center; gap: 7px; padding: 10px 18px; border-radius: 999px; border: none; background: {{accent}}; color: #ffffff; font-family: inherit; font-size: 14px; font-weight: 700; cursor: pointer; flex-shrink: 0;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v3l-6 6v7l-4-2v-5L4 7z"/></svg>
+      All filters
+    </button>
+  </div>
+
+  <!-- ── results header ────────────────────────────────────────────── -->
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 16px 28px 12px 28px;">
+    <div style="display: flex; align-items: baseline; gap: 10px;">
+      <h1 style="font-size: 19px;">34 rentals in Cathedral</h1>
+      <span style="font-size: 13px; color: #7b8698;">All owner-direct · no agent fees</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span style="font-size: 13px; color: #7b8698;">Sort</span>
+      <div style="display: flex; gap: 3px; padding: 4px; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 999px; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+        <sc-for list="{{sorts}}" as="s" hint-placeholder-count="3">
+          <button onClick="{{s.pick}}" style="{{s.style}}">{{s.label}}</button>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── results + map ─────────────────────────────────────────────── -->
+  <div style="display: flex; gap: 20px; padding: 0 28px 24px 28px; flex-grow: 1; min-height: 0;">
+
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-content: start; flex-grow: 1;">
+      <sc-for list="{{results}}" as="r" hint-placeholder-count="6">
+        <div style="display: flex; flex-direction: column; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; overflow: hidden; box-shadow: 0 2px 10px rgba(16,24,40,0.07);">
+
+          <div style="position: relative; height: 172px; background: {{r.photo}}; display: flex; align-items: flex-start; justify-content: space-between; padding: 12px;">
+            <span style="{{r.badgeStyle}}">{{r.badge}}</span>
+            <div style="width: 32px; height: 32px; border-radius: 999px; background: rgba(255,255,255,0.92); display: flex; align-items: center; justify-content: center; color: #5b6575;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.5-1.5 3-3.3 3-5.5A5.5 5.5 0 0 0 12 5.4 5.5 5.5 0 0 0 2 8.5c0 2.2 1.5 4 3 5.5l7 7z"/></svg>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 8px; padding: 15px 17px 17px 17px;">
+            <div style="display: flex; align-items: baseline; justify-content: space-between;">
+              <div style="display: flex; align-items: baseline; gap: 3px;">
+                <span style="font-size: 21px; font-weight: 900; letter-spacing: -0.02em;">{{r.price}}</span>
+                <span style="font-size: 13px; font-weight: 600; color: #7b8698;">/mo</span>
+              </div>
+              <span style="font-size: 12px; font-weight: 600; color: #9aa4b5;">{{r.age}}</span>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 12px; font-size: 13px; font-weight: 600; color: #3c4454;">
+              <span style="display: flex; align-items: center; gap: 5px;">
+                <dc-import name="Icon" glyph="bed" size="{{15}}" hint-size="15px,15px"></dc-import>{{r.beds}}
+              </span>
+              <span style="display: flex; align-items: center; gap: 5px;">
+                <dc-import name="Icon" glyph="dish" size="{{15}}" hint-size="15px,15px"></dc-import>{{r.baths}}
+              </span>
+              <span style="display: flex; align-items: center; gap: 5px;">
+                <dc-import name="Icon" glyph="area" size="{{15}}" hint-size="15px,15px"></dc-import>{{r.sqft}}
+              </span>
+            </div>
+
+            <p style="font-size: 13px; color: #7b8698; line-height: 1.4;">{{r.address}}</p>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px;">
+              <sc-for list="{{r.chips}}" as="c" hint-placeholder-count="2">
+                <span style="padding: 5px 11px; border-radius: 999px; background: {{c.tint}}; color: {{c.ink}}; font-size: 11px; font-weight: 700;">{{c.label}}</span>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- map rail: a viewport query, not a picture -->
+    <div style="width: 470px; flex-shrink: 0; background: #ffffff; border: 1px solid #e6e8ee; border-radius: 20px; padding: 8px; box-shadow: 0 2px 10px rgba(16,24,40,0.07); display: flex; flex-direction: column; gap: 8px;">
+      <div style="flex-grow: 1; border-radius: 14px; background: linear-gradient(155deg, #eaf1fb, #d5e3f7); position: relative; overflow: hidden;">
+        <sc-for list="{{pins}}" as="p" hint-placeholder-count="5">
+          <div style="{{p.style}}">{{p.price}}</div>
+        </sc-for>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 6px 10px;">
+        <span style="font-size: 11px; color: #9aa4b5;">Search this area as I move the map</span>
+        <div style="width: 34px; height: 20px; border-radius: 999px; background: {{accent}}; display: flex; align-items: center; justify-content: flex-end; padding: 2px;">
+          <div style="width: 16px; height: 16px; border-radius: 999px; background: #ffffff;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "accent": {"editor": "color", "default": "#356dbe", "options": ["#356dbe", "#2f6f5e", "#8a4b8f", "#b4542a"], "section": "Theme"},
+  "$preview": {"width": 1440, "height": 1000}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { mode: 'rent', sort: 'newest' };
+  }
+
+  palette(hue) {
+    return { tint: 'oklch(0.95 0.045 ' + hue + ')', ink: 'oklch(0.44 0.125 ' + hue + ')' };
+  }
+
+  pill(active, accent) {
+    return 'padding: 7px 15px; font-family: inherit; font-size: 13px; font-weight: 600;'
+      + ' cursor: pointer; border: none; border-radius: 999px;'
+      + (active ? ' background: ' + accent + '; color: #ffffff;'
+                : ' background: transparent; color: #5b6575;');
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#356dbe';
+    const p = (h) => this.palette(h);
+    const BLUE = 250, GREEN = 155, AMBER = 75, VIOLET = 300, TEAL = 195, ROSE = 20;
+
+    const modes = [
+      { id: 'rent', label: 'Rent' },
+      { id: 'buy', label: 'Buy' },
+    ].map((m) => ({
+      ...m,
+      pick: () => this.setState({ mode: m.id }),
+      style: this.pill(this.state.mode === m.id, accent),
+    }));
+
+    const sorts = [
+      { id: 'newest', label: 'Newest' },
+      { id: 'price_asc', label: 'Price ↑' },
+      { id: 'price_desc', label: 'Price ↓' },
+    ].map((s) => ({
+      ...s,
+      pick: () => this.setState({ sort: s.id }),
+      style: this.pill(this.state.sort === s.id, accent),
+    }));
+
+    const filterChip = 'display: inline-flex; align-items: center; gap: 6px; padding: 10px 15px;'
+      + ' border-radius: 999px; border: 1px solid #dde1e9; background: #ffffff;'
+      + ' color: #3c4454; font-size: 13px; font-weight: 600; cursor: pointer;';
+
+    const quickFilters = ['Price', 'Beds', 'Home type', 'Pets'].map((label) => ({
+      label,
+      style: filterChip,
+    }));
+
+    // The freshness label is the anti-stale-listing move: a classifieds site
+    // whose results are half gone is the format's oldest complaint.
+    const results = [
+      { price: '$1,450', beds: '2 bed', baths: '1 bath', sqft: '880 sq ft', age: '3 days ago',
+        address: '2100 Victoria Ave · Cathedral', photo: 'linear-gradient(140deg,#d5e3f7,#b3cdf0)',
+        badge: 'Verified owner', tone: BLUE,
+        chips: [{ label: 'Heat included', ...p(ROSE) }, { label: 'Pets OK', ...p(GREEN) }] },
+      { price: '$1,195', beds: '1 bed', baths: '1 bath', sqft: '640 sq ft', age: 'Today',
+        address: '3125 13th Ave · Cathedral', photo: 'linear-gradient(140deg,#e4ecdd,#cfe0c2)',
+        badge: 'New today', tone: GREEN,
+        chips: [{ label: 'In-suite laundry', ...p(BLUE) }] },
+      { price: '$1,800', beds: '3 bed', baths: '2 bath', sqft: '1,240 sq ft', age: '1 week ago',
+        address: '58 Angus Cres · Lakeview', photo: 'linear-gradient(140deg,#f3e6d8,#e6d0b6)',
+        badge: 'Verified owner', tone: BLUE,
+        chips: [{ label: 'Heated garage', ...p(VIOLET) }, { label: 'Fenced yard', ...p(GREEN) }] },
+      { price: '$975', beds: '1 bed', baths: '1 bath', sqft: '520 sq ft', age: '2 days ago',
+        address: '1840 Smith St · Downtown', photo: 'linear-gradient(140deg,#e8e2f0,#d4c9e6)',
+        badge: 'Verified owner', tone: BLUE,
+        chips: [{ label: 'Utilities included', ...p(TEAL) }] },
+      { price: '$2,100', beds: '3 bed', baths: '2 bath', sqft: '1,510 sq ft', age: '5 days ago',
+        address: '412 Leopold Cres · Lakeview', photo: 'linear-gradient(140deg,#dbe9ea,#c2dade)',
+        badge: 'Verified owner', tone: BLUE,
+        chips: [{ label: 'Block heater plug', ...p(AMBER) }] },
+      { price: '$1,325', beds: '2 bed', baths: '1 bath', sqft: '790 sq ft', age: '4 days ago',
+        address: '2255 Rae St · Cathedral', photo: 'linear-gradient(140deg,#f0e3e3,#e0c9c9)',
+        badge: 'Verified owner', tone: BLUE,
+        chips: [{ label: 'Balcony', ...p(TEAL) }, { label: 'Cats OK', ...p(GREEN) }] },
+    ].map((r) => {
+      const tone = this.palette(r.tone);
+      return {
+        ...r,
+        badgeStyle: 'padding: 6px 12px; border-radius: 999px; font-size: 11px; font-weight: 700;'
+          + ' background: rgba(255,255,255,0.94); color: ' + tone.ink + ';',
+      };
+    });
+
+    // Price bubbles, positioned by hand for the mock. In the product these
+    // come from the bbox query in modules/search.
+    const pinAt = (top, left, active) =>
+      'position: absolute; top: ' + top + '; left: ' + left + ';'
+      + ' padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 800;'
+      + ' box-shadow: 0 4px 14px rgba(16,24,40,0.18); white-space: nowrap;'
+      + (active ? ' background: ' + accent + '; color: #ffffff;'
+                : ' background: #ffffff; color: #12151c;');
+
+    const pins = [
+      { price: '$1,450', style: pinAt('26%', '30%', true) },
+      { price: '$1,195', style: pinAt('44%', '54%', false) },
+      { price: '$1,800', style: pinAt('62%', '22%', false) },
+      { price: '$975', style: pinAt('18%', '62%', false) },
+      { price: '$1,325', style: pinAt('72%', '58%', false) },
+    ];
+
+    return { accent, modes, sorts, quickFilters, results, pins };
+  }
+}
+</script>
+</body>
+</html>
