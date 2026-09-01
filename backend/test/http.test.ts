@@ -31,9 +31,15 @@ function fakeAuth(sessions: Map<string, FakeSession>) {
   return {
     async resolveSession(token: string) {
       const s = sessions.get(token);
-      // The real resolver reads the role from `users` on every request; the
-      // fake defaults it so existing cases need no change.
-      return s ? { ...s, role: s.role ?? ('user' as const) } : null;
+      // The real resolver reads role, email and verification state from
+      // `users` on every request; the fake defaults them so existing cases
+      // need no change.
+      return s
+        ? {
+            email: 'u@example.test', emailVerified: true,
+            ...s, role: s.role ?? ('user' as const),
+          }
+        : null;
     },
   };
 }

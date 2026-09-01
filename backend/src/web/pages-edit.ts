@@ -28,7 +28,7 @@ import { html, raw, type Html } from './html.js';
 import { page, money, csrfField, type Flash, type Viewer } from './layout.js';
 import { icon, iconSprite, type IconName } from './icons.js';
 import { amenityPicker } from './pages-parts.js';
-import { MAX_PHOTOS } from '../modules/listings/policy.js';
+import { MAX_PHOTOS, publishBlockers } from '../modules/listings/policy.js';
 import type { AmenityGroup } from '../modules/listings/policy.js';
 import type { ListingView, PhotoView } from '../modules/listings/service.js';
 
@@ -61,8 +61,23 @@ export function editListingPage(opts: Flash & {
 }): string {
   const l = opts.listing;
   const has = new Set(l.amenities);
-  const needsPhoto = l.photos.length === 0;
   const needsAttestation = l.descriptionSource !== 'human' && !l.descriptionAttested;
+
+  // The REAL list, from the same pure function the service calls before it
+  // will publish anything. The page used to show two of these six, so an
+  // owner could clear both and still be refused — by "Verify your email
+  // address", which nothing on the page had mentioned and no page could do.
+  const blockers = publishBlockers({
+    title: l.title,
+    description: l.description,
+    priceCents: l.priceCents,
+    mode: l.mode,
+    propertyType: l.propertyType,
+    photoCount: l.photos.length,
+    descriptionSource: l.descriptionSource,
+    descriptionAttestedAt: l.descriptionAttested ? new Date() : null,
+    ownerEmailVerified: opts.viewer.emailVerified === true,
+  });
 
   return page(
     {
@@ -88,14 +103,18 @@ ${iconSprite()}
 
   ${/* What is still needed before this can go live, said once and plainly
         rather than discovered by pressing a button that refuses. */ null}
-  ${needsPhoto || needsAttestation
+  ${blockers.length > 0
     ? html`<div class="notice notice-warn">
              <strong>Before this can be submitted:</strong>
              <ul style="margin:6px 0 0;padding-left:18px">
-               ${needsPhoto ? html`<li>Add at least one photo.</li>` : null}
-               ${needsAttestation
-                 ? html`<li>Read the description and confirm it is accurate.</li>`
-                 : null}
+               ${blockers.map((b) => html`<li>${b}${
+                 // The one blocker with somewhere to go. The others are fixed
+                 // by the form below; this one is fixed on another page, and
+                 // saying so is the difference between an instruction and a
+                 // dead end.
+                 b.startsWith('Verify your email')
+                   ? html` <a href="/account/email">Confirm it now →</a>`
+                   : null}</li>`)}
              </ul>
            </div>`
     : null}

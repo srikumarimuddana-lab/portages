@@ -335,13 +335,43 @@ function card(l: SearchResultCard): Html {
 
 // ── sign in ─────────────────────────────────────────────────────────────────
 
-export function signInPage(opts: Flash & { next?: string | null }): string {
+/**
+ * Sign-in providers, rendered only for the ones actually configured.
+ *
+ * A "Continue with Google" button on a deployment with no Google client id is
+ * a button that takes you to a 500. The env loader already refuses a
+ * half-configured provider; this refuses to advertise an absent one.
+ */
+function oauthButtons(providers: readonly string[], next: string | null | undefined): Html {
+  if (providers.length === 0) return html``;
+  const q = next ? `?next=${encodeURIComponent(next)}` : '';
+  return html`
+<div style="margin-bottom:18px">
+  ${providers.map((p) => html`
+  <a class="btn" style="width:100%;margin-bottom:8px"
+     href="/api/auth/oauth/${p}${q}">Continue with ${PROVIDER_NAMES[p] ?? p}</a>`)}
+  <div style="display:flex;align-items:center;gap:10px;color:var(--muted);
+              font-size:12.5px;margin:14px 0 2px">
+    <span style="flex:1;height:1px;background:var(--line)"></span>or
+    <span style="flex:1;height:1px;background:var(--line)"></span>
+  </div>
+</div>`;
+}
+
+const PROVIDER_NAMES: Record<string, string> = { google: 'Google', facebook: 'Facebook' };
+
+export function signInPage(opts: Flash & {
+  next?: string | null;
+  /** Providers with credentials configured. Empty on most deployments. */
+  providers?: readonly string[];
+}): string {
   return page(
     { title: 'Sign in', viewer: null, path: '/signin', notice: opts.notice, error: opts.error },
     html`
 <div class="wrap" style="max-width:400px;padding:52px 20px">
   <h1>Sign in</h1>
   ${opts.error ? html`<p class="notice notice-warn">${opts.error}</p>` : null}
+  ${oauthButtons(opts.providers ?? [], opts.next)}
   <form method="post" action="/signin" class="stack">
     ${opts.next ? html`<input type="hidden" name="next" value="${opts.next}">` : null}
     <div class="field">
@@ -351,6 +381,9 @@ export function signInPage(opts: Flash & { next?: string | null }): string {
     <div class="field">
       <label for="pw">Password</label>
       <input id="pw" type="password" name="password" required autocomplete="current-password">
+      <p class="small" style="margin:6px 0 0">
+        <a href="/forgot-password">Forgotten it?</a>
+      </p>
     </div>
     <button class="btn btn-primary" type="submit" style="width:100%">Sign in</button>
   </form>

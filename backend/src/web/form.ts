@@ -62,6 +62,19 @@ export class FormFields {
     return (this.#params.get(name) ?? '').trim();
   }
 
+  /**
+   * The value exactly as sent, with no trimming.
+   *
+   * For passwords, and only for passwords. A space at either end of a password
+   * is a character the person chose; `get` would remove it, which means a
+   * password set through the JSON API (where the validator is explicitly
+   * `trim: false`) could never be typed into this form. Trimming on the way in
+   * and on the way out is consistent only until the two doors disagree.
+   */
+  raw(name: string): string {
+    return this.#params.get(name) ?? '';
+  }
+
   all(name: string): string[] {
     return this.#params.getAll(name).map((v) => v.trim()).filter(Boolean);
   }

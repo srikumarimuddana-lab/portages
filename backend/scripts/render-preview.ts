@@ -25,6 +25,11 @@ import {
 } from '../src/web/pages-admin.js';
 import { editListingPage } from '../src/web/pages-edit.js';
 import {
+  verifyEmailPage, forgotPasswordPage, resetPasswordPage,
+} from '../src/web/pages-auth.js';
+import { reportListingPage } from '../src/web/pages-report.js';
+import { REPORT_KINDS } from '../src/modules/trust/reports.js';
+import {
   AMENITIES, AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES,
 } from '../src/modules/listings/policy.js';
 import { FLAG_KEYS, FLAGS, defaultStateOf } from '../src/modules/flags/registry.js';
@@ -156,6 +161,25 @@ const PAGES: Array<[string, string]> = [
     viewer: null, listing: HOSTILE, origin: 'https://portage.ca',
   })],
   ['signin', signInPage({})],
+  ['signin-oauth', signInPage({ providers: ['google', 'facebook'] })],
+  ['verify-email', verifyEmailPage({
+    viewer: OWNER, email: 'owner@example.test', verified: false, sent: false,
+  })],
+  ['verify-email-done', verifyEmailPage({
+    viewer: OWNER, email: 'owner@example.test', verified: true, sent: false,
+  })],
+  ['forgot-password', forgotPasswordPage({})],
+  ['reset-password', resetPasswordPage({
+    email: 'owner@example.test',
+    notice: 'If that address is registered, a code is on its way. It expires in 10 minutes.',
+  })],
+  ['report-listing', reportListingPage({
+    viewer: OWNER, kinds: REPORT_KINDS, from: '/listings/l1',
+    listing: {
+      id: 'l1', title: 'Bright two bedroom in Cathedral', priceCents: 150_000,
+      mode: 'rent', addressLine: '2100 Victoria Ave', city: 'Regina',
+    },
+  })],
   ['signin-error', signInPage({ error: 'That email and password did not match.' })],
   ['signup', signUpPage({})],
 

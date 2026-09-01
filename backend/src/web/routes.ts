@@ -62,6 +62,7 @@ async function viewerOf(app: App, req: Request): Promise<Viewer | null> {
   // Every form the page renders echoes it back in a hidden field.
   return {
     userId: session.userId, role: session.role,
+    email: session.email, emailVerified: session.emailVerified,
     ...(cookies[CSRF_COOKIE] ? { csrfToken: cookies[CSRF_COOKIE] } : {}),
   };
 }
@@ -118,7 +119,13 @@ export async function signInRoute(req: Request, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
   if (viewer) return Response.redirect(new URL('/', req.url).toString(), 302);
   const next = new URL(req.url).searchParams.get('next');
-  return respond(signInPage({ next, ...flashOf(new URL(req.url)) }));
+  return respond(signInPage({
+    next,
+    // Only the ones with credentials. A button that leads to a 500 is worse
+    // than no button, and the env loader already refuses half a provider.
+    providers: Object.keys(app.env.oauth),
+    ...flashOf(new URL(req.url)),
+  }));
 }
 
 function notFoundPage(viewer: Viewer | null): string {

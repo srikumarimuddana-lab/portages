@@ -45,7 +45,8 @@ import { createReport, listReports, decideReports } from './http/routes/reports.
 import { homeRoute, searchRoute, listingRoute, signInRoute } from './web/routes.js';
 import {
   signUpRoute, ownerListingsRoute, newListingRoute, editListingRoute,
-  inboxRoute, threadRoute,
+  inboxRoute, threadRoute, verifyEmailRoute, forgotPasswordRoute, resetPasswordRoute,
+  newReportRoute,
   queueRoute, listingReviewRoute, messageReviewRoute, flagsRoute, mediaRoute,
 } from './web/routes-app.js';
 import {
@@ -53,6 +54,8 @@ import {
   createListingAction, updateListingAction, transitionListingAction,
   attestListingAction, removePhotoAction, movePhotoAction, draftDescriptionAction,
   enquireAction, replyAction, blockThreadAction, reportAction,
+  sendEmailCodeAction, confirmEmailCodeAction,
+  forgotPasswordAction, resetPasswordAction,
   decideListingAction, decideMessageAction, dismissQueueAction, setFlagAction,
 } from './web/actions.js';
 import { preflight } from './http/respond.js';
@@ -154,6 +157,10 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/listings/:id', (req, p) => listingRoute(req, p['id']!, app));
   route('GET', '/signin', (req) => signInRoute(req, app));
   route('GET', '/signup', (req) => signUpRoute(req, app));
+  route('GET', '/forgot-password', (req) => forgotPasswordRoute(req, app));
+  route('GET', '/reset-password', (req) => resetPasswordRoute(req, app));
+  route('GET', '/account/email', (req) => verifyEmailRoute(req, app));
+  route('GET', '/reports/new', (req) => newReportRoute(req, app));
   route('GET', '/media/:key', (req, p) => mediaRoute(req, p['key']!, app));
 
   route('GET', '/dashboard/listings', (req) => ownerListingsRoute(req, app));
@@ -178,6 +185,10 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/signup', (req) => signUpAction(req, app));
   route('POST', '/signout', (req) => signOutAction(req, app));
   route('POST', '/reports', (req) => reportAction(req, app));
+  route('POST', '/forgot-password', (req) => forgotPasswordAction(req, app));
+  route('POST', '/reset-password', (req) => resetPasswordAction(req, app));
+  route('POST', '/account/email/send', (req) => sendEmailCodeAction(req, app));
+  route('POST', '/account/email/confirm', (req) => confirmEmailCodeAction(req, app));
 
   route('POST', '/dashboard/listings', (req) => createListingAction(req, app));
   route('POST', '/dashboard/listings/:id/edit',

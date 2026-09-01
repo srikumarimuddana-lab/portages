@@ -26,6 +26,13 @@ export interface Viewer {
    * form that silently 403s in production.
    */
   csrfToken?: string | undefined;
+  email?: string | undefined;
+  /**
+   * Whether the address is confirmed. Read from the session, which already
+   * joins `users`, so it costs nothing and every page can act on it — the
+   * alternative is a page that only learns the answer when a write is refused.
+   */
+  emailVerified?: boolean | undefined;
 }
 
 /** The one-shot messages a redirect can carry into any page. */
@@ -110,7 +117,14 @@ h1 { font-size: 26px; } h2 { font-size: 19px; } h3 { font-size: 16px; }
 .btn-sm { padding: 6px 11px; font-size: 13px; }
 
 /* forms */
+/* input:not([type]) is not decoration. An attribute selector matches the
+   ATTRIBUTE, not the effective type — so an <input> with no type renders as
+   text and matches none of the rules below, coming out unstyled and narrower
+   than the button under it. Caught by looking at the verification page.
+   (No backticks in this comment: the whole stylesheet is one template
+   literal, and a stray backtick ends it.) */
 input[type=text], input[type=email], input[type=password], input[type=number],
+input[type=search], input[type=tel], input:not([type]),
 select, textarea {
   width: 100%; padding: 10px 12px; border: 1px solid var(--line-2);
   border-radius: 8px; font: 15px var(--font); color: var(--ink); background: var(--bg);

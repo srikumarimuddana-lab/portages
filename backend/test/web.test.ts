@@ -26,7 +26,7 @@ import { newListingPage } from '../src/web/pages-app.js';
 import { contentSecurityPolicy, uploadOriginOf } from '../src/web/headers.js';
 import { hasIcon } from '../src/web/icons.js';
 import {
-  AMENITIES, AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES, MAX_PHOTOS,
+  AMENITIES, AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES, MAX_PHOTOS, publishBlockers,
 } from '../src/modules/listings/policy.js';
 import type { SearchResultCard } from '../src/modules/search/service.js';
 import type { ListingView } from '../src/modules/listings/service.js';
@@ -486,10 +486,13 @@ test('every signed-in form carries a CSRF field', async () => {
       const method = /method="(\w+)"/.exec(block)?.[1] ?? 'get';
       if (!requiresCsrf(method)) continue;
 
-      // Sign in and sign up carry no session to protect and no digest to
-      // check against; the origin check covers them, as it does on the JSON
-      // side.
-      const anonymous = /action="\/(signin|signup)"/.test(block);
+      // Posts made with no session to protect. There is no CSRF digest to
+      // check against because there is no session, and nothing authenticated
+      // to abuse — the Origin check is what covers them, exactly as it does
+      // on the JSON side. Adding to this list is a security decision: it must
+      // only ever hold routes reachable while signed out.
+      const ANONYMOUS = ['/signin', '/signup', '/forgot-password', '/reset-password'];
+      const anonymous = ANONYMOUS.some((a) => block.includes(`action="${a}"`));
 
       assert.ok(
         anonymous || block.includes('csrfField('),
@@ -819,7 +822,10 @@ const EDIT_LISTING: ListingView = {
 
 function edit(over: Partial<Parameters<typeof editListingPage>[0]> = {}): string {
   return editListingPage({
-    viewer: { userId: 'o', role: 'user', csrfToken: 'tok' },
+    // Verified by default: an unverified viewer trips a publish blocker, and
+    // every test below that is not about that blocker would be asserting
+    // against a checklist it did not mean to summon.
+    viewer: { userId: 'o', role: 'user', csrfToken: 'tok', emailVerified: true },
     listing: EDIT_LISTING,
     amenityGroups: AMENITY_GROUPS,
     roomTypes: ROOM_TYPES,
@@ -829,9 +835,10 @@ function edit(over: Partial<Parameters<typeof editListingPage>[0]> = {}): string
   });
 }
 
-test('the edit page names both blockers before an owner presses submit', () => {
-  // The dead end this page exists to remove: submit refuses, and the refusal
-  // does not say which of the two requirements is missing.
+test('the checklist names every blocker, not the two the page knows about', () => {
+  // The dead end this fixes: the page listed a photo and an attestation, and
+  // `publishBlockers` has SIX conditions. An owner could clear both visible
+  // ones and still be refused — by a requirement nothing had mentioned.
   const out = edit({
     listing: {
       ...EDIT_LISTING,
@@ -841,10 +848,45 @@ test('the edit page names both blockers before an owner presses submit', () => {
     },
   });
   assert.match(out, /Add at least one photo/);
-  assert.match(out, /confirm it is accurate/);
+  assert.match(out, /stand behind the AI-written description/);
 });
 
-test('the checklist disappears once both blockers are cleared', () => {
+test('the checklist is generated from publishBlockers, not a second copy of it', () => {
+  // Asserted by construction: every string the service would refuse with must
+  // appear on the page. A hand-maintained list drifts the moment a blocker is
+  // added, and the symptom is the dead end above coming back.
+  const listing = { ...EDIT_LISTING, title: 'x', description: 'short', photos: [] };
+  const expected = publishBlockers({
+    title: listing.title,
+    description: listing.description,
+    priceCents: listing.priceCents,
+    mode: listing.mode,
+    propertyType: listing.propertyType,
+    photoCount: 0,
+    descriptionSource: listing.descriptionSource,
+    descriptionAttestedAt: null,
+    ownerEmailVerified: false,
+  });
+  const out = edit({
+    listing,
+    viewer: { userId: 'o', role: 'user', csrfToken: 'tok', emailVerified: false },
+  });
+  assert.ok(expected.length >= 4, `fixture should trip several blockers, got ${expected.length}`);
+  for (const b of expected) assert.ok(out.includes(b), `missing from the page: ${b}`);
+});
+
+test('the unverified-email blocker is the one with somewhere to go', () => {
+  // Every other blocker is fixed by the form on this page. This one is fixed
+  // on another page, and for a long time there was no page at all — so the
+  // link is the difference between an instruction and a dead end.
+  const out = edit({
+    viewer: { userId: 'o', role: 'user', csrfToken: 'tok', emailVerified: false },
+  });
+  assert.match(out, /Verify your email address/);
+  assert.match(out, /href="\/account\/email"/);
+});
+
+test('the checklist disappears once every blocker is cleared', () => {
   const out = edit({
     listing: {
       ...EDIT_LISTING,
@@ -1248,3 +1290,90 @@ function shot(id: string, position: number) {
   return { id, storageKey: `listings/x/${id}`, kind: 'photo',
            mime: 'image/jpeg', bytes: 1000, position };
 }
+
+// ── reachability ────────────────────────────────────────────────────────────
+
+test('every link and form target on a page has a route behind it', async () => {
+  // This is the test that would have caught "Report this listing" pointing at
+  // /reports/new for as long as that link existed — under the anti-fraud
+  // warning on every live listing, which is the worst possible place in the
+  // product for a 404. It was found by diffing the templates against the
+  // router by hand; doing it by hand once is not a control.
+  const idx = await (await import('node:fs/promises'))
+    .readFile(new URL('../src/index.ts', import.meta.url).pathname, 'utf8');
+
+  const routes = [...idx.matchAll(/route\('(\w+)', '([^']+)'/g)]
+    .map((m) => ({ method: m[1]!, parts: m[2]!.split('/').filter(Boolean) }));
+
+  const routed = (method: string, path: string): boolean => {
+    const got = path.split('/').filter(Boolean);
+    return routes.some((r) => r.method === method
+      && r.parts.length === got.length
+      && r.parts.every((w, i) => w.startsWith(':') || w === got[i]));
+  };
+
+  const problems: string[] = [];
+  for (const f of await pageFiles()) {
+    const src = code(await readWeb(f));
+
+    // Interpolations become a single segment: `/listings/${id}` is a request
+    // for `/listings/:id`, and that is exactly what the router pattern says.
+    const normalize = (p: string) => p.replace(/\$\{[^}]*\}/g, 'x').split('?')[0]!;
+
+    for (const m of src.matchAll(/href="(\/[^"]*)"/g)) {
+      const p = normalize(m[1]!);
+      // /media/:key is served from routes-app; anchors go nowhere new.
+      if (p.startsWith('/api/') || p === '/' || p.startsWith('#')) continue;
+      if (!routed('GET', p)) problems.push(`${f}: link to ${p} has no GET route`);
+    }
+    // The whole opening tag, because `method=` is written BEFORE `action=` in
+    // these templates — a regex anchored on `action` and looking rightwards
+    // for the method finds nothing and calls every form a GET.
+    for (const m of src.matchAll(/<form\b([^>]*)>/g)) {
+      const attrs = m[1]!;
+      const action = /action="(\/[^"]*)"/.exec(attrs)?.[1];
+      if (!action) continue;
+      const method = /method="post"/i.test(attrs) ? 'POST' : 'GET';
+      const p = normalize(action);
+      if (!routed(method, p)) problems.push(`${f}: ${method} to ${p} has no route`);
+    }
+  }
+  assert.deepEqual(problems, [], problems.join('\n'));
+});
+
+test('no page renders an input without a type, which the CSS cannot reach', () => {
+  // `input[type=text]` matches the ATTRIBUTE, not the effective type. An
+  // <input> with no type behaves as text and matches none of the form rules,
+  // so it renders unstyled — narrower than the button beneath it, with the
+  // wrong font. Nothing errors; it just looks broken on one page.
+  //
+  // The stylesheet now also carries `input:not([type])` as a safety net. This
+  // asserts the markup is right anyway, because relying on the net means the
+  // next input gets whatever the net happens to give it.
+  for (const [name, out] of [
+    ['edit', edit()],
+    ['new listing', newListing()],
+    ['sign in', signInPage({})],
+  ] as const) {
+    // The stylesheet and the inline scripts are stripped first. Both are
+    // inlined into every page, both talk ABOUT markup, and neither is markup —
+    // the comment explaining this very rule contains the words it looks for.
+    const markup = out
+      .replace(/<style>[\s\S]*?<\/style>/g, '')
+      .replace(/<script>[\s\S]*?<\/script>/g, '');
+    for (const tag of markup.match(/<input\b[^>]*>/g) ?? []) {
+      assert.match(tag, /\stype="/, `${name}: input with no type: ${tag}`);
+    }
+  }
+});
+
+test('the stylesheet contains no backtick, which would end its own literal', async () => {
+  // The CSS is one template literal. A backtick anywhere inside it — in a
+  // comment, in content: "" — closes the string, and what follows is parsed
+  // as code. tsc accepted it; Node's type stripper did not, so the whole
+  // suite failed to load with an error pointing at a comment.
+  const src = await readWeb('layout.ts');
+  const css = /const CSS = `([\s\S]*?)`;/.exec(src);
+  assert.ok(css, 'the stylesheet should be one template literal');
+  assert.ok(css![1]!.length > 3000, 'and the whole of it, not a truncated prefix');
+});

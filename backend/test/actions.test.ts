@@ -496,3 +496,176 @@ test('moving a photo that is not on the listing is a 404, not a crash', async ()
   assert.equal(calls.reorder.length, 0);
   assert.equal(flash(res).error, 'Photo not found.');
 });
+
+// ── email verification and password reset ───────────────────────────────────
+//
+// Both of these APIs were built, tested, and completely unreachable. The
+// assertions here are about the handler being a faithful door onto them —
+// especially where a careless handler would undo a property the service went
+// to trouble to have.
+
+function authHarness(over: { sent?: boolean; throws?: unknown } = {}) {
+  const calls = {
+    requested: [] as string[],
+    confirmed: [] as Array<{ userId: string; code: string }>,
+    resetRequested: [] as string[],
+    resetConfirmed: [] as Array<{ email: string; code: string; newPassword: string }>,
+  };
+  const app = {
+    cfg: { allowedOrigins: ['https://portage.ca'] },
+    secureCookies: true,
+    auth: {
+      async resolveSession() {
+        return {
+          userId: OWNER, sessionId: 's1', csrfHash: MATERIAL.csrfHash, role: 'user',
+          email: 'owner@example.test', emailVerified: false,
+        };
+      },
+    },
+    otpFlows: {
+      async requestEmailVerification(userId: string) {
+        if (over.throws) throw over.throws;
+        calls.requested.push(userId);
+        return { sent: over.sent ?? true };
+      },
+      async confirmEmailVerification(userId: string, code: string) {
+        if (over.throws) throw over.throws;
+        calls.confirmed.push({ userId, code });
+      },
+      async requestPasswordReset(email: string) {
+        calls.resetRequested.push(email);
+        return { message: 'If that address is registered, a code is on its way.' };
+      },
+      async confirmPasswordReset(input: { email: string; code: string; newPassword: string }) {
+        if (over.throws) throw over.throws;
+        calls.resetConfirmed.push(input);
+      },
+    },
+  } as never;
+  return { app, calls };
+}
+
+function anonPost(path: string, body: string): Request {
+  return new Request(`https://portage.ca${path}`, {
+    method: 'POST',
+    headers: {
+      origin: 'https://portage.ca',
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  });
+}
+
+test('sending a verification code says that it retires the previous one', async () => {
+  // Someone looking at two codes needs to know which works. Saying nothing is
+  // how a person types the older one and concludes the feature is broken.
+  const { sendEmailCodeAction } = await import('../src/web/actions.js');
+  const { app, calls } = authHarness();
+  const res = await sendEmailCodeAction(post('/account/email/send', ''), app);
+  assert.deepEqual(calls.requested, [OWNER]);
+  assert.match(flash(res).notice!, /replaces any earlier one/);
+});
+
+test('an already-verified address is told so, not told a code was sent', async () => {
+  const { sendEmailCodeAction } = await import('../src/web/actions.js');
+  const { app } = authHarness({ sent: false });
+  const res = await sendEmailCodeAction(post('/account/email/send', ''), app);
+  assert.match(flash(res).notice!, /already confirmed/);
+});
+
+test('the code is checked for shape before the service is called', async () => {
+  const { confirmEmailCodeAction } = await import('../src/web/actions.js');
+  for (const code of ['', '12345', '1234567', 'abcdef', '12 34 56']) {
+    const { app, calls } = authHarness();
+    const res = await confirmEmailCodeAction(
+      post('/account/email/confirm', `code=${encodeURIComponent(code)}`), app,
+    );
+    assert.equal(calls.confirmed.length, 0, `"${code}" should not reach the service`);
+    assert.match(flash(res).error!, /six digits/);
+  }
+});
+
+test('a valid code is passed through with the session user, never a posted one', async () => {
+  const { confirmEmailCodeAction } = await import('../src/web/actions.js');
+  const { app, calls } = authHarness();
+  await confirmEmailCodeAction(
+    post('/account/email/confirm', 'code=123456&userId=someone-else'), app,
+  );
+  assert.deepEqual(calls.confirmed, [{ userId: OWNER, code: '123456' }]);
+});
+
+test('the reset request answers identically whether or not the account exists', async () => {
+  // The service is built not to distinguish them. A handler that reported
+  // "no such account" would turn a page needing no password and no session
+  // into an account-enumeration oracle.
+  const { forgotPasswordAction } = await import('../src/web/actions.js');
+  const { app, calls } = authHarness();
+
+  const a = await forgotPasswordAction(
+    anonPost('/forgot-password', 'email=real@example.test'), app,
+  );
+  const b = await forgotPasswordAction(
+    anonPost('/forgot-password', 'email=nobody@example.test'), app,
+  );
+
+  assert.equal(flash(a).notice, flash(b).notice);
+  assert.equal(flash(a).path, flash(b).path);
+  assert.equal(flash(a).error, null);
+  assert.deepEqual(calls.resetRequested, ['real@example.test', 'nobody@example.test']);
+});
+
+test('the reset request carries the address forward so the next page is prefilled', async () => {
+  // The code arrives on a phone; the form was opened on a laptop. Without
+  // this the person has to retype the address they just typed.
+  const { forgotPasswordAction } = await import('../src/web/actions.js');
+  const { app } = authHarness();
+  const res = await forgotPasswordAction(
+    anonPost('/forgot-password', 'email=real%40example.test'), app,
+  );
+  const loc = new URL(res.headers.get('location')!, 'https://portage.ca');
+  assert.equal(loc.pathname, '/reset-password');
+  assert.equal(loc.searchParams.get('email'), 'real@example.test');
+});
+
+test('a password is passed through untrimmed', async () => {
+  // `get()` trims. A space at either end of a password is a character the
+  // person chose, and the JSON API's validator is explicitly trim:false — so
+  // trimming here means a password set through the API could never be typed
+  // into this form.
+  const { resetPasswordAction } = await import('../src/web/actions.js');
+  const { app, calls } = authHarness();
+  await resetPasswordAction(
+    anonPost('/reset-password',
+      'email=a%40b.test&code=123456&newPassword=%20a+long+passphrase%20'), app,
+  );
+  assert.equal(calls.resetConfirmed[0]!.newPassword, ' a long passphrase ');
+});
+
+test('a completed reset does not sign you in', async () => {
+  // Every session was just cut, on purpose. Issuing a fresh one on the
+  // strength of a six-digit code hands the account to whoever had the code.
+  const { resetPasswordAction } = await import('../src/web/actions.js');
+  const { app } = authHarness();
+  const res = await resetPasswordAction(
+    anonPost('/reset-password', 'email=a%40b.test&code=123456&newPassword=a+long+passphrase'), app,
+  );
+  assert.equal(flash(res).path, '/signin');
+  assert.equal(res.headers.get('set-cookie'), null, 'no session cookie may be issued here');
+  assert.match(flash(res).notice!, /signed out/);
+});
+
+test('a failed reset keeps the address so the code does not have to be re-requested', async () => {
+  const { resetPasswordAction } = await import('../src/web/actions.js');
+  const { app } = authHarness({
+    throws: Object.assign(new Error('That code is not valid. Request a new one and try again.'), {
+      name: 'AppError', status: 401,
+    }),
+  });
+  const res = await resetPasswordAction(
+    anonPost('/reset-password', 'email=a%40b.test&code=999999&newPassword=a+long+passphrase'), app,
+  );
+  const loc = new URL(res.headers.get('location')!, 'https://portage.ca');
+  assert.equal(loc.pathname, '/reset-password');
+  assert.equal(loc.searchParams.get('email'), 'a@b.test');
+  assert.match(loc.searchParams.get('error')!, /not valid/);
+});

@@ -55,7 +55,7 @@ export async function signInAction(req: Request, app: App): Promise<Response> {
 
     const issued = await app.auth.login({
       email: fields.get('email'),
-      password: fields.get('password'),
+      password: fields.raw('password'),
       ip: 'form',
       userAgent: req.headers.get('user-agent') ?? undefined,
     });
@@ -78,7 +78,7 @@ export async function signUpAction(req: Request, app: App): Promise<Response> {
     const { fields } = await readForm(req, app, { requireAuth: false });
     const issued = await app.auth.signup({
       email: fields.get('email'),
-      password: fields.get('password'),
+      password: fields.raw('password'),
       ip: 'form',
       userAgent: req.headers.get('user-agent') ?? undefined,
     });
@@ -110,6 +110,106 @@ export async function signOutAction(req: Request, app: App): Promise<Response> {
       clearCookie(CSRF_COOKIE, app.secureCookies),
     ],
   });
+}
+
+// ── email verification ──────────────────────────────────────────────────────
+
+/**
+ * POST /account/email/send
+ *
+ * The rate limits live in OtpService and are per identifier, so pressing this
+ * repeatedly is bounded there rather than here. What this adds is the honest
+ * message: a resend retires the previous code, and someone who has both in
+ * front of them needs to know which one works.
+ */
+export async function sendEmailCodeAction(req: Request, app: App): Promise<Response> {
+  try {
+    const { viewer } = await readForm(req, app);
+    const out = await app.otpFlows.requestEmailVerification(viewer!.userId);
+    return redirectTo('/account/email', {
+      notice: out.sent
+        ? 'Code sent. It lasts ten minutes, and it replaces any earlier one.'
+        : 'That address is already confirmed.',
+    });
+  } catch (err) {
+    return fail('/account/email', err);
+  }
+}
+
+/** POST /account/email/confirm */
+export async function confirmEmailCodeAction(req: Request, app: App): Promise<Response> {
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    const code = fields.get('code');
+    if (!/^\d{6}$/.test(code)) throw new FormError('Enter the six digits from the email.');
+
+    await app.otpFlows.confirmEmailVerification(viewer!.userId, code);
+    return redirectTo('/account/email', {
+      notice: 'Confirmed. Your listings can be published now.',
+    });
+  } catch (err) {
+    return fail('/account/email', err);
+  }
+}
+
+// ── password reset ──────────────────────────────────────────────────────────
+
+/**
+ * POST /forgot-password
+ *
+ * Always the same answer, whether or not the address is registered. The
+ * service is built that way and this must not undo it: a reset form that says
+ * "no such account" is an account-enumeration oracle that needs no password
+ * and no rate limit to work.
+ *
+ * The address is carried to the next page so the code entry form is prefilled,
+ * which is what makes the flow survive being finished on the phone that got
+ * the code rather than the browser that asked.
+ */
+export async function forgotPasswordAction(req: Request, app: App): Promise<Response> {
+  let email = '';
+  try {
+    const { fields } = await readForm(req, app, { requireAuth: false });
+    email = fields.get('email');
+    if (!email) throw new FormError('Enter your email address.');
+
+    const out = await app.otpFlows.requestPasswordReset(email);
+    const q = new URLSearchParams({ email });
+    return redirectTo('/reset-password', { query: q, notice: out.message });
+  } catch (err) {
+    const q = new URLSearchParams(email ? { email } : {});
+    return redirectTo('/forgot-password', { query: q, error: messageFor(err).message });
+  }
+}
+
+/** POST /reset-password */
+export async function resetPasswordAction(req: Request, app: App): Promise<Response> {
+  let email = '';
+  try {
+    const { fields } = await readForm(req, app, { requireAuth: false });
+    email = fields.get('email');
+    const code = fields.get('code');
+    if (!/^\d{6}$/.test(code)) throw new FormError('Enter the six digits from the email.');
+
+    await app.otpFlows.confirmPasswordReset({
+      email,
+      code,
+      // Not trimmed. A password is the one field where leading and trailing
+      // space is a character the person chose, and silently removing it locks
+      // them out of the account they just set it on.
+      newPassword: fields.raw('newPassword'),
+    });
+
+    // No session is issued here on purpose. Signing someone in on the strength
+    // of a six-digit code, immediately after every other session was cut, is a
+    // shortcut worth refusing: they have the new password, so they can use it.
+    return redirectTo('/signin', {
+      notice: 'Password changed, and every other session signed out. Sign in with the new one.',
+    });
+  } catch (err) {
+    const q = new URLSearchParams(email ? { email } : {});
+    return redirectTo('/reset-password', { query: q, error: messageFor(err).message });
+  }
 }
 
 // ── listings ────────────────────────────────────────────────────────────────

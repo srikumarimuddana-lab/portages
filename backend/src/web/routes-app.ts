@@ -14,6 +14,9 @@ import {
   queuePage, listingReviewPage, messageReviewPage, flagsPage,
 } from './pages-admin.js';
 import { editListingPage } from './pages-edit.js';
+import { verifyEmailPage, forgotPasswordPage, resetPasswordPage } from './pages-auth.js';
+import { reportListingPage } from './pages-report.js';
+import { REPORT_KINDS } from '../modules/trust/reports.js';
 import { AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES } from '../modules/listings/policy.js';
 import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
 import { contentSecurityPolicy, uploadOriginOf } from './headers.js';
@@ -55,7 +58,7 @@ async function viewerOf(app: App, req: Request): Promise<Viewer | null> {
   // echo it back in a hidden field. Its cookie is deliberately readable —
   // that is the "double submit" half of the defence.
   return {
-    userId: s.userId, role: s.role,
+    userId: s.userId, role: s.role, email: s.email, emailVerified: s.emailVerified,
     ...(cookies[CSRF_COOKIE] ? { csrfToken: cookies[CSRF_COOKIE] } : {}),
   };
 }
@@ -167,6 +170,74 @@ function draftProblemsOf(url: URL): { draftProblems?: Array<{ phrase: string; ex
     }];
   });
   return problems.length > 0 ? { draftProblems: problems } : {};
+}
+
+// ── account ─────────────────────────────────────────────────────────────────
+
+export async function verifyEmailRoute(req: Request, app: App): Promise<Response> {
+  const viewer = await viewerOf(app, req);
+  if (!viewer) return toSignIn(req);
+  const url = new URL(req.url);
+  return respond(app, verifyEmailPage({
+    viewer,
+    email: viewer.email ?? '',
+    verified: viewer.emailVerified === true,
+    // Only affects which button reads "Send another code".
+    sent: url.searchParams.has('notice'),
+    ...flashOf(url),
+  }));
+}
+
+export async function forgotPasswordRoute(req: Request, app: App): Promise<Response> {
+  const viewer = await viewerOf(app, req);
+  if (viewer) return Response.redirect(new URL('/', req.url).toString(), 302);
+  const url = new URL(req.url);
+  return respond(app, forgotPasswordPage({
+    email: url.searchParams.get('email')?.slice(0, 254) ?? null,
+    ...flashOf(url),
+  }));
+}
+
+export async function resetPasswordRoute(req: Request, app: App): Promise<Response> {
+  const viewer = await viewerOf(app, req);
+  if (viewer) return Response.redirect(new URL('/', req.url).toString(), 302);
+  const url = new URL(req.url);
+  return respond(app, resetPasswordPage({
+    email: url.searchParams.get('email')?.slice(0, 254) ?? null,
+    ...flashOf(url),
+  }));
+}
+
+// ── reports ─────────────────────────────────────────────────────────────────
+
+/**
+ * GET /reports/new?listing=:id
+ *
+ * Signed in, because a report with no reporter cannot be weighted, followed up
+ * or held against a serial false reporter — `ReportService.create` requires
+ * one. An anonymous visitor is sent to sign in and returned here afterwards.
+ */
+export async function newReportRoute(req: Request, app: App): Promise<Response> {
+  const viewer = await viewerOf(app, req);
+  if (!viewer) return toSignIn(req);
+
+  const url = new URL(req.url);
+  const listingId = url.searchParams.get('listing') ?? '';
+  try {
+    const l = await app.listings.get(listingId, { userId: viewer.userId, role: viewer.role });
+    return respond(app, reportListingPage({
+      viewer,
+      listing: {
+        id: l.id, title: l.title, priceCents: l.priceCents, mode: l.mode,
+        addressLine: l.address.addressLine, city: l.address.city,
+      },
+      kinds: REPORT_KINDS,
+      from: `/listings/${l.id}`,
+      ...flashOf(url),
+    }));
+  } catch {
+    return notFound(app, viewer);
+  }
 }
 
 // ── messaging ───────────────────────────────────────────────────────────────
