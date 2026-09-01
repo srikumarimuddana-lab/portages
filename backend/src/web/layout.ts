@@ -206,6 +206,35 @@ label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-2); 
 footer.site-foot { border-top: 1px solid var(--line); margin-top: 40px; padding: 26px 0;
   color: var(--muted); font-size: 13px; }
 
+/* search filters */
+.filters { margin-top: 14px; }
+.filter-panel { border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--bg); }
+.filter-panel > summary { display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px; cursor: pointer; font-weight: 600; font-size: 14px;
+  color: var(--ink-2); list-style: none; }
+/* Safari draws its own disclosure triangle through ::-webkit-details-marker
+   and ignores list-style, so both are needed to get one consistent control. */
+.filter-panel > summary::-webkit-details-marker { display: none; }
+.filter-panel > summary::after { content: '▾'; margin-left: auto; color: var(--muted); }
+.filter-panel[open] > summary::after { content: '▴'; }
+.filter-panel > summary:hover { background: var(--surface); }
+.filter-body { padding: 4px 14px 16px; border-top: 1px solid var(--line); }
+.filter-row { display: grid; gap: 14px; margin-top: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.filter-set { border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 14px 14px; margin: 14px 0 0; }
+.filter-set legend { font-weight: 600; padding: 0 6px; color: var(--ink-2); }
+.filter-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+/* the chips that say what is being filtered on */
+.chips-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin-top: 12px; }
+.chip-x { display: inline-flex; align-items: center; gap: 5px; margin: 0;
+  text-transform: none; }
+.chip-x:hover { background: var(--accent); color: #fff; text-decoration: none; }
+.chip-x .ico { width: 13px; height: 13px; opacity: .75; }
+
 /* the document locker */
 .doc-row { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center;
   padding: 12px 14px; border-bottom: 1px solid var(--line); }

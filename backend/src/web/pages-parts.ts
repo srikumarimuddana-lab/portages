@@ -28,7 +28,17 @@ import type { AmenityGroup } from '../modules/listings/policy.js';
  * re-implemented. The script adds a live count and a filter box, and nothing
  * that the form depends on.
  */
-export function amenityPicker(groups: readonly AmenityGroup[], has: ReadonlySet<string>): Html {
+export function amenityPicker(
+  groups: readonly AmenityGroup[],
+  has: ReadonlySet<string>,
+  /**
+   * The line above the tiles. Both sides of the marketplace use this picker
+   * and they mean opposite things by it: an owner is declaring what the
+   * property has, a searcher is saying what they want. Shared markup, not
+   * shared voice.
+   */
+  caption = 'Tick everything the property actually has.',
+): Html {
   const chosen = groups.reduce(
     (n, g) => n + g.items.filter((i) => has.has(i.key)).length, 0,
   );
@@ -40,7 +50,7 @@ export function amenityPicker(groups: readonly AmenityGroup[], has: ReadonlySet<
 
   <div class="amen-head">
     <span class="small muted">
-      Tick everything the property actually has.
+      ${caption}
       <span class="amen-count" data-count data-n="${String(chosen)}">${String(chosen)}</span>
     </span>
     ${/* Hidden until the script reveals it: a search box that filters nothing
@@ -119,3 +129,160 @@ const AMENITY_SCRIPT = `
     });
   });
 })();`;
+
+// ── search filters ──────────────────────────────────────────────────────────
+
+/**
+ * The filter panel.
+ *
+ * A GET FORM, and that is the whole design. Submitting navigates to
+ * /search?mode=rent&minBeds=2… — so a filtered search is a URL, which means it
+ * can be bookmarked, sent to the person you are moving in with, and indexed.
+ * A search that lives in JavaScript state has none of those properties, and
+ * for a site whose competitive position rests on arriving from a Google result
+ * that is not a small thing.
+ *
+ * It also means the panel works with scripting off, needs no endpoint of its
+ * own, and cannot get out of step with what the server actually filtered on:
+ * every control is populated from the parsed spec, not from what was typed.
+ *
+ * PRICE IS IN DOLLARS HERE and cents everywhere behind it. People do not type
+ * 150000 when they mean $1,500, and `?minPrice=1500` is a URL somebody can
+ * read. The conversion happens in one adapter, next to the parse.
+ */
+export interface FilterValues {
+  q?: string | undefined;
+  mode?: string | undefined;
+  propertyTypes?: readonly string[] | undefined;
+  minPrice?: number | undefined;
+  maxPrice?: number | undefined;
+  minBeds?: number | undefined;
+  minBaths?: number | undefined;
+  minSqft?: number | undefined;
+  amenities?: readonly string[] | undefined;
+  sort?: string | undefined;
+}
+
+export function searchFilters(opts: {
+  values: FilterValues;
+  propertyTypes: readonly string[];
+  amenityGroups: readonly AmenityGroup[];
+  sorts: readonly string[];
+  /** How many filters are currently applied, so a collapsed panel says so. */
+  activeCount: number;
+  /**
+   * Where "Clear filters" goes: the same search with the text query kept and
+   * every filter dropped. Built by the caller, which is the only place that
+   * has the real parameters — assembling it inline here meant concatenating a
+   * conditional query string into an href, which is how a link ends up
+   * pointing at `/searchundefined`.
+   */
+  clearHref: string;
+}): Html {
+  const v = opts.values;
+  const types = new Set(v.propertyTypes ?? []);
+  const has = new Set(v.amenities ?? []);
+
+  return html`
+<form method="get" action="/search" class="filters">
+  ${/* The text query rides inside the same form. Without it here, refining a
+        filter would silently drop the words the person searched for — the
+        form only submits its own fields. */ null}
+  <input type="hidden" name="q" value="${v.q ?? ''}">
+  <input type="hidden" name="sort" value="${v.sort ?? ''}">
+
+  <details class="filter-panel" ${opts.activeCount > 0 ? raw('open') : null}>
+    <summary>
+      ${icon('search', 'ico-sm')} Filters
+      ${opts.activeCount > 0
+        ? html`<span class="amen-count" data-n="${String(opts.activeCount)}">${String(opts.activeCount)}</span>`
+        : null}
+    </summary>
+
+    <div class="filter-body">
+      <div class="filter-row">
+        <div class="field">
+          <label for="f-mode">Renting or buying</label>
+          <select id="f-mode" name="mode">
+            <option value="">Either</option>
+            <option value="rent" ${v.mode === 'rent' ? raw('selected') : null}>To rent</option>
+            <option value="sale" ${v.mode === 'sale' ? raw('selected') : null}>To buy</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-minprice">Price from</label>
+          <input id="f-minprice" type="number" name="minPrice" min="0" step="50"
+                 placeholder="Any" value="${v.minPrice === undefined ? '' : String(v.minPrice)}">
+        </div>
+        <div class="field">
+          <label for="f-maxprice">Price to</label>
+          <input id="f-maxprice" type="number" name="maxPrice" min="0" step="50"
+                 placeholder="Any" value="${v.maxPrice === undefined ? '' : String(v.maxPrice)}">
+        </div>
+      </div>
+
+      <div class="filter-row">
+        ${minField('minBeds', 'Bedrooms', v.minBeds)}
+        ${minField('minBaths', 'Bathrooms', v.minBaths)}
+        ${minField('minSqft', 'Square feet', v.minSqft, 50)}
+      </div>
+
+      <fieldset class="filter-set">
+        <legend class="small">Property type</legend>
+        <div class="amen-grid" style="padding-top:4px">
+          ${opts.propertyTypes.map((t) => html`
+          <label class="amen">
+            <input type="checkbox" name="propertyTypes" value="${t}"
+                   ${types.has(t) ? raw('checked') : null}>
+            <span class="amen-tile">${t.replace(/_/g, ' ')}</span>
+            <span class="amen-tick" aria-hidden="true">${icon('check')}</span>
+          </label>`)}
+        </div>
+      </fieldset>
+
+      ${/* The same picker the listing forms use. One definition of what an
+            amenity is and how it looks, on both sides of the marketplace. */ null}
+      ${amenityPicker(opts.amenityGroups, has, 'Only show listings that have all of these.')}
+
+      <div class="filter-actions">
+        <button class="btn btn-primary" type="submit">Show matches</button>
+        ${opts.activeCount > 0
+          ? html`<a class="btn" href="${opts.clearHref}">Clear filters</a>`
+          : null}
+      </div>
+    </div>
+  </details>
+</form>`;
+}
+
+function minField(name: string, label: string, value: number | undefined, step = 1): Html {
+  return html`
+<div class="field">
+  <label for="f-${name}">${label}</label>
+  <input id="f-${name}" type="number" name="${name}" min="0" step="${String(step)}"
+         placeholder="Any" value="${value === undefined ? '' : String(value)}">
+</div>`;
+}
+
+/**
+ * The filters currently applied, each one removable.
+ *
+ * Every chip is a LINK to the same search without that one filter — no script,
+ * and each is its own shareable URL. This exists because a collapsed filter
+ * panel hides what it is doing: the commonest confusion on any filtered search
+ * is an empty result page caused by a filter the person forgot they set three
+ * refinements ago.
+ */
+export function activeFilters(opts: {
+  chips: ReadonlyArray<{ label: string; without: string }>;
+}): Html {
+  if (opts.chips.length === 0) return html``;
+  return html`
+<div class="chips-row">
+  <span class="small muted">Filtering by</span>
+  ${opts.chips.map((c) => html`
+    <a class="chip chip-tint chip-x" href="${c.without}">
+      ${c.label}${icon('x', 'ico-sm')}
+    </a>`)}
+</div>`;
+}

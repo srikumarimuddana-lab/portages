@@ -15,6 +15,7 @@
  */
 import { html, raw, jsonScript, safeUrl, type Html } from './html.js';
 import { page, money, facts, amenityLabel, csrfField, type Flash, type Viewer } from './layout.js';
+import { iconSprite } from './icons.js';
 import type { SearchPage, SearchResultCard } from '../modules/search/service.js';
 import type { ListingView } from '../modules/listings/service.js';
 
@@ -75,6 +76,14 @@ export interface SearchPageOptions extends Flash {
   reading?: string | null;
   /** Why the AI path did not produce filters, when it did not. */
   fallback?: string | null;
+  /** The filter panel, already built. Absent on the pages that reuse this
+   *  template for a 404, where offering filters would be nonsense. */
+  filters?: Html | null;
+  chips?: Html | null;
+  /** The sort in force, so the control reflects what actually happened. */
+  sort?: string | null;
+  /** Carried into the sort form so changing it keeps every other filter. */
+  hidden?: ReadonlyArray<[string, string]> | null;
 }
 
 export function searchPage(o: SearchPageOptions): string {
@@ -88,12 +97,16 @@ export function searchPage(o: SearchPageOptions): string {
       path: '/search',
     },
     html`
+${iconSprite()}
 <div class="wrap" style="padding:22px 20px 0">
   <form class="searchbar" action="/search" method="get" role="search">
     <input type="text" name="q" value="${o.query}" placeholder="Search listings"
            aria-label="Search listings">
     <button class="btn btn-primary" type="submit">Search</button>
   </form>
+
+  ${o.filters ?? null}
+  ${o.chips ?? null}
 
   ${o.reading
     ? html`<p class="notice" style="margin-top:14px">Read as: ${o.reading}</p>`
@@ -104,10 +117,28 @@ export function searchPage(o: SearchPageOptions): string {
            </p>`
     : null}
 
-  <p class="muted small" style="margin:16px 0 12px">
-    ${n === 0 ? 'No matches' : `${n} listing${n === 1 ? '' : 's'}`}
-    ${o.query ? html` for “${o.query}”` : null}
-  </p>
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0 12px">
+    <p class="muted small" style="margin:0">
+      ${n === 0 ? 'No matches' : `${n} listing${n === 1 ? '' : 's'}`}
+      ${o.query ? html` for “${o.query}”` : null}
+    </p>
+    ${/* A GET form, like the filters: changing the sort is a new URL, and it
+          carries every filter forward in hidden fields rather than losing
+          them — which is what a bare <select> with an onchange would do the
+          moment the script failed. */ null}
+    ${o.sort
+      ? html`
+      <form method="get" action="/search" style="margin-left:auto;display:flex;gap:6px">
+        ${(o.hidden ?? []).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}
+        <label for="sort" class="small muted" style="margin:0;align-self:center">Sort</label>
+        <select id="sort" name="sort" style="width:auto;padding:6px 10px;font-size:13px">
+          ${SORT_COPY.map(([value, label]) => html`
+            <option value="${value}" ${o.sort === value ? raw('selected') : null}>${label}</option>`)}
+        </select>
+        <button class="btn btn-sm" type="submit">Apply</button>
+      </form>`
+      : null}
+  </div>
 
   ${n > 0
     ? html`<div class="grid">${o.results.results.map(card)}</div>`
@@ -126,6 +157,14 @@ export function searchPage(o: SearchPageOptions): string {
  * than apologises — "we could not read that" with no results underneath is a
  * failure; with results underneath it is a note.
  */
+/** Sort values in the order people reach for them, with readable labels. */
+const SORT_COPY: ReadonlyArray<[string, string]> = [
+  ['newest', 'Newest first'],
+  ['price_asc', 'Price: low to high'],
+  ['price_desc', 'Price: high to low'],
+  ['relevance', 'Best match'],
+];
+
 function fallbackMessage(reason: string): string {
   switch (reason) {
     case 'not_confident':

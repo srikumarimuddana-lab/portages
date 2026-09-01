@@ -19,6 +19,12 @@
  */
 import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
 import { homePage, searchPage, listingPage, signInPage } from './pages.js';
+import { searchFilters, activeFilters } from './pages-parts.js';
+import {
+  filterValuesFrom, specFrom, activeCount, chipsFor, clearHref, hiddenFields,
+} from './search-query.js';
+import { AMENITY_GROUPS, PROPERTY_TYPES } from '../modules/listings/policy.js';
+import { SORT_ORDERS } from '../modules/search/spec.js';
 import { contentSecurityPolicy } from './headers.js';
 import { flashOf } from './form.js';
 import type { Viewer } from './layout.js';
@@ -83,20 +89,39 @@ export async function homeRoute(req: Request, app: App): Promise<Response> {
 
 export async function searchRoute(req: Request, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);
-  const params = new URL(req.url).searchParams;
-  const q = (params.get('q') ?? '').slice(0, 200);
+  const url = new URL(req.url);
+  const params = url.searchParams;
 
-  // The page always runs a plain search. Natural-language interpretation is a
-  // progressive enhancement the browser asks for separately, so a slow model
-  // can never be the reason a search page is slow.
-  const results = await app.search.search({
-    ...(q ? { q } : {}),
-    sort: q ? 'relevance' : 'newest',
-    limit: 24,
-  });
+  // The URL is the search. Everything the panel offers is read back out of it
+  // and handed to the same `parse` the JSON API uses, so a filtered search is
+  // a link — bookmarkable, shareable, indexable — rather than a state a script
+  // is holding.
+  const values = filterValuesFrom(params);
+  const spec = specFrom(values, 24);
 
-  return respond(searchPage({ viewer, query: q, results, ...flashOf(new URL(req.url)) }));
+  // Natural-language interpretation stays a separate, opt-in request. A slow
+  // model can never be the reason this page is slow.
+  const results = await app.search.search(spec);
+
+  return respond(searchPage({
+    viewer,
+    query: values.q ?? '',
+    results,
+    sort: results.sort,
+    hidden: hiddenFields(params),
+    filters: searchFilters({
+      values,
+      propertyTypes: PROPERTY_TYPES,
+      amenityGroups: AMENITY_GROUPS,
+      sorts: SORT_ORDERS,
+      activeCount: activeCount(values),
+      clearHref: clearHref(values),
+    }),
+    chips: activeFilters({ chips: chipsFor(params, values) }),
+    ...flashOf(url),
+  }));
 }
+
 
 export async function listingRoute(req: Request, id: string, app: App): Promise<Response> {
   const viewer = await viewerOf(app, req);

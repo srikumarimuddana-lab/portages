@@ -144,6 +144,7 @@ declare const TextDecoder: {
 interface URLSearchParams {
   get(name: string): string | null;
   has(name: string): boolean;
+  delete(name: string): void;
   getAll(name: string): string[];
   set(name: string, value: string): void;
   append(name: string, value: string): void;

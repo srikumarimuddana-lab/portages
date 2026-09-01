@@ -23,6 +23,7 @@ import {
 import { homePage, searchPage, listingPage, signInPage } from '../src/web/pages.js';
 import { editListingPage } from '../src/web/pages-edit.js';
 import { newListingPage } from '../src/web/pages-app.js';
+import { searchFilters, activeFilters } from '../src/web/pages-parts.js';
 import { contentSecurityPolicy, uploadOriginOf } from '../src/web/headers.js';
 import { hasIcon } from '../src/web/icons.js';
 import {
@@ -1129,19 +1130,55 @@ test('room type is offered on a rental and absent on a sale', () => {
 
 // ── icons ───────────────────────────────────────────────────────────────────
 
+/**
+ * One rendered sample per page function.
+ *
+ * The two scanners below are render-level: they can only see a page that has
+ * actually been rendered. Keeping the list here, in one place, is what stops
+ * them from silently covering four pages out of nine — which is exactly what
+ * happened when the search page grew icons and kept passing a test that only
+ * looked at two other pages.
+ */
+function samples(): Array<[string, string]> {
+  return [
+    ['home', homePage({ viewer: null, recent: [], liveCount: 0 })],
+    ['search', searchPage({
+      viewer: null, query: '', results: { results: [], sort: 'newest' },
+      sort: 'newest', hidden: [],
+      filters: searchFilters({
+        values: {}, propertyTypes: PROPERTY_TYPES, amenityGroups: AMENITY_GROUPS,
+        sorts: ['newest'], activeCount: 0, clearHref: '/search',
+      }),
+      chips: activeFilters({ chips: [{ label: 'To rent', without: '/search' }] }),
+    })],
+    ['sign in', signInPage({ providers: ['google'] })],
+    ['edit', edit()],
+    ['new listing', newListing()],
+  ];
+}
+
 test('every icon a page references is defined in the sprite', () => {
   // Two silent failures, one test. A <use href="#i-typo"> renders NOTHING —
   // no error, no console message, no broken-image glyph, just a gap on one
   // tile out of forty-two. And a page that uses icons but forgets to emit the
   // sprite renders forty-two of those gaps.
-  for (const [name, out] of [['edit', edit()], ['new listing', newListing()]] as const) {
+  for (const [name, out] of samples()) {
     const defined = new Set([...out.matchAll(/<symbol id="i-([a-zA-Z]+)"/g)].map((m) => m[1]!));
     const used = new Set([...out.matchAll(/<use href="#i-([a-zA-Z]+)"/g)].map((m) => m[1]!));
 
     const missing = [...used].filter((n) => !defined.has(n));
-    assert.deepEqual(missing, [], `${name}: icons used but not defined: ${missing.join(', ')}`);
-    assert.ok(used.size >= 10, `${name}: expected many icons, saw ${used.size}`);
+    assert.deepEqual(
+      missing, [],
+      `${name}: uses icons the page never defined (${missing.join(', ')}) — `
+      + 'either a typo, or the page forgot to emit the sprite',
+    );
   }
+  // And at least one sample must actually use icons, or the loop above proves
+  // nothing about pages that do.
+  assert.ok(
+    samples().some(([, out]) => (out.match(/<use href="#i-/g) ?? []).length >= 10),
+    'no sample uses icons; this scanner would pass over anything',
+  );
 });
 
 test('the new listing page offers the same picker as the edit page', () => {
@@ -1390,11 +1427,7 @@ test('no page renders an input without a type, which the CSS cannot reach', () =
   // The stylesheet now also carries `input:not([type])` as a safety net. This
   // asserts the markup is right anyway, because relying on the net means the
   // next input gets whatever the net happens to give it.
-  for (const [name, out] of [
-    ['edit', edit()],
-    ['new listing', newListing()],
-    ['sign in', signInPage({})],
-  ] as const) {
+  for (const [name, out] of samples()) {
     // The stylesheet and the inline scripts are stripped first. Both are
     // inlined into every page, both talk ABOUT markup, and neither is markup —
     // the comment explaining this very rule contains the words it looks for.
@@ -1416,4 +1449,93 @@ test('the stylesheet contains no backtick, which would end its own literal', asy
   const css = /const CSS = `([\s\S]*?)`;/.exec(src);
   assert.ok(css, 'the stylesheet should be one template literal');
   assert.ok(css![1]!.length > 3000, 'and the whole of it, not a truncated prefix');
+});
+
+// ── search filters ──────────────────────────────────────────────────────────
+
+test('the filter panel is a GET form, so a filtered search is a URL', () => {
+  // Bookmarkable, shareable, indexable. A search that lives in script state
+  // has none of those, and SEO is the whole competitive position.
+  const out = filtered({});
+  const form = /<form method="get" action="\/search" class="filters">/.exec(out);
+  assert.ok(form, 'the filters should submit as a GET to /search');
+  assert.ok(!out.includes('onchange='), 'and need no script to work');
+});
+
+test('changing the sort keeps every filter, because a form submits only its own fields', () => {
+  // Without hidden fields the sort control is a filter reset with a
+  // misleading label — you pick "price low to high" and lose the two
+  // bedrooms and the price ceiling you just set.
+  const out = filtered({
+    sort: 'price_asc',
+    hidden: [['q', 'cathedral'], ['mode', 'rent'], ['minBeds', '2'], ['amenities', 'parking']],
+  });
+  const sortForm = out.slice(out.indexOf('<label for="sort"') - 600, out.indexOf('<label for="sort"'));
+  for (const [k, v] of [['q', 'cathedral'], ['mode', 'rent'], ['minBeds', '2'], ['amenities', 'parking']]) {
+    assert.ok(
+      sortForm.includes(`name="${k}" value="${v}"`),
+      `the sort form drops ${k}, which would clear it on every sort change`,
+    );
+  }
+});
+
+test('the text query rides inside the filter form too', () => {
+  // Same failure in the other direction: refining a filter would drop the
+  // words the person searched for.
+  const out = filtered({ query: 'cathedral' });
+  assert.match(out, /<input type="hidden" name="q" value="cathedral">/);
+});
+
+test('the panel opens itself when filters are already applied', () => {
+  // A collapsed panel hiding an active filter is how an empty result page
+  // becomes a mystery.
+  assert.match(filtered({ activeCount: 3 }), /<details class="filter-panel" open>/);
+  assert.ok(!filtered({ activeCount: 0 }).includes('filter-panel" open'));
+});
+
+test('an applied filter renders a chip that links to the search without it', () => {
+  const out = searchPage({
+    viewer: null, query: '', results: { results: [], sort: 'newest' },
+    chips: activeFilters({ chips: [{ label: 'To rent', without: '/search?minBeds=2' }] }),
+  });
+  assert.match(out, /href="\/search\?minBeds=2"/);
+  assert.match(out, /To rent/);
+});
+
+/** The search page with the real filter panel on it. */
+function filtered(over: {
+  query?: string; sort?: string; activeCount?: number;
+  hidden?: ReadonlyArray<[string, string]>;
+}): string {
+  return searchPage({
+    viewer: null,
+    query: over.query ?? '',
+    results: { results: [], sort: 'newest' },
+    sort: over.sort ?? 'newest',
+    hidden: over.hidden ?? [],
+    filters: searchFilters({
+      values: { q: over.query ?? '' },
+      propertyTypes: PROPERTY_TYPES,
+      amenityGroups: AMENITY_GROUPS,
+      sorts: ['newest', 'price_asc', 'price_desc', 'relevance'],
+      activeCount: over.activeCount ?? 0,
+      clearHref: '/search',
+    }),
+  });
+}
+
+test('the amenity picker speaks to whoever is looking at it', () => {
+  // The same component on both sides of the marketplace, meaning opposite
+  // things: an owner declares what the property has, a searcher says what
+  // they want. "Tick everything the property actually has" on a search page
+  // is instructions for somebody else.
+  const owner = edit();
+  assert.match(owner, /Tick everything the property actually has/);
+
+  const searcher = searchFilters({
+    values: {}, propertyTypes: PROPERTY_TYPES, amenityGroups: AMENITY_GROUPS,
+    sorts: ['newest'], activeCount: 0, clearHref: '/search',
+  }).value;
+  assert.match(searcher, /Only show listings that have all of these/);
+  assert.ok(!searcher.includes('the property actually has'));
 });

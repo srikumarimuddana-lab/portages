@@ -29,6 +29,10 @@ import {
 } from '../src/web/pages-auth.js';
 import { reportListingPage } from '../src/web/pages-report.js';
 import { documentsPage } from '../src/web/pages-documents.js';
+import { searchFilters, activeFilters } from '../src/web/pages-parts.js';
+import {
+  filterValuesFrom, activeCount, chipsFor, clearHref, hiddenFields,
+} from '../src/web/search-query.js';
 import { auditPage } from '../src/web/pages-admin.js';
 import { DOCUMENT_KINDS, MAX_DOCUMENT_BYTES } from '../src/modules/documents/policy.js';
 import { AUDIT_ACTIONS } from '../src/modules/audit/service.js';
@@ -134,6 +138,26 @@ const PAGES: Array<[string, string]> = [
     results: { results: CARDS.slice(0, 6), sort: 'relevance' },
     reading: 'Two bedrooms, up to $1,500 a month, with parking.',
   })],
+  ['search-filtered', (() => {
+    const params = new URLSearchParams(
+      'q=cathedral&mode=rent&minPrice=1000&maxPrice=2000&minBeds=2&amenities=parking'
+      + '&amenities=heated_garage&propertyTypes=apartment',
+    );
+    const values = filterValuesFrom(params);
+    return searchPage({
+      viewer: { userId: 'u1', role: 'user', csrfToken: CSRF },
+      query: 'cathedral',
+      results: { results: CARDS.slice(0, 4), sort: 'price_asc' },
+      sort: 'price_asc',
+      hidden: hiddenFields(params),
+      filters: searchFilters({
+        values, propertyTypes: PROPERTY_TYPES, amenityGroups: AMENITY_GROUPS,
+        sorts: ['newest', 'price_asc', 'price_desc', 'relevance'],
+        activeCount: activeCount(values), clearHref: clearHref(values),
+      }),
+      chips: activeFilters({ chips: chipsFor(params, values) }),
+    });
+  })()],
   ['search-fallback', searchPage({
     viewer: null,
     query: 'what is the weather',

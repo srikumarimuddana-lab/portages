@@ -335,3 +335,151 @@ test('the cover photo is chosen only from photos that exist', async () => {
   assert.ok(cover, 'the cards should fetch their cover photos');
   assert.match(cover!, /status = 'stored'/);
 });
+
+// ── the search page's URL ───────────────────────────────────────────────────
+//
+// The page URL is a public contract: it is what gets bookmarked, shared and
+// indexed. These are about the translation between it and the spec the search
+// module takes — the one place the two vocabularies meet.
+
+test('dollars in the URL become cents in the spec', async () => {
+  // People do not type 150000 when they mean $1,500, and a URL somebody can
+  // read is the point of having one. The database only knows cents.
+  const { filterValuesFrom, specFrom } = await import('../src/web/search-query.js');
+  const spec = specFrom(
+    filterValuesFrom(new URLSearchParams('minPrice=1500&maxPrice=2200.50')), 24,
+  );
+  assert.equal(spec['minPriceCents'], 150_000);
+  assert.equal(spec['maxPriceCents'], 220_050);
+  assert.ok(!('minPrice' in spec), 'the page vocabulary must not leak into the spec');
+});
+
+test('a filter nobody set is absent from the spec, not present as undefined', async () => {
+  // `minBeds: undefined` is not the same as no minBeds to a validator that
+  // checks `in`, and it is how a filter nobody asked for reaches a WHERE.
+  const { filterValuesFrom, specFrom } = await import('../src/web/search-query.js');
+  const spec = specFrom(filterValuesFrom(new URLSearchParams('q=cathedral')), 24);
+  for (const k of ['minBeds', 'minBaths', 'minSqft', 'minPriceCents', 'maxPriceCents', 'mode']) {
+    assert.ok(!(k in spec), `${k} should be absent, got ${String(spec[k])}`);
+  }
+  assert.deepEqual(Object.keys(spec).sort(), ['limit', 'q', 'sort']);
+});
+
+test('an amenity outside the allowlist is dropped, not passed on', async () => {
+  const { filterValuesFrom } = await import('../src/web/search-query.js');
+  const v = filterValuesFrom(new URLSearchParams('amenities=parking&amenities=helipad'));
+  assert.deepEqual(v.amenities, ['parking']);
+});
+
+test('a nonsense number in the URL is ignored rather than failing the page', async () => {
+  // Someone arriving with a hand-edited or stale URL should see listings. The
+  // JSON API is the surface that reports a bad filter; this one shows homes.
+  const { filterValuesFrom, specFrom } = await import('../src/web/search-query.js');
+  const spec = specFrom(filterValuesFrom(new URLSearchParams('minBeds=lots&minPrice=-5')), 24);
+  assert.ok(!('minBeds' in spec));
+  assert.ok(!('minPriceCents' in spec));
+});
+
+test('relevance is refused when there is nothing to be relevant to', async () => {
+  const { filterValuesFrom, specFrom } = await import('../src/web/search-query.js');
+
+  const noQuery = specFrom(filterValuesFrom(new URLSearchParams('sort=relevance')), 24);
+  assert.equal(noQuery['sort'], 'newest');
+
+  const withQuery = specFrom(filterValuesFrom(new URLSearchParams('sort=relevance&q=cathedral')), 24);
+  assert.equal(withQuery['sort'], 'relevance');
+});
+
+test('an unknown sort falls back rather than reaching the query builder', async () => {
+  const { filterValuesFrom, specFrom } = await import('../src/web/search-query.js');
+  const spec = specFrom(filterValuesFrom(new URLSearchParams('sort=cheapest')), 24);
+  assert.equal(spec['sort'], 'newest');
+});
+
+test('every spec the page builds is one the search module accepts', async () => {
+  // The two vocabularies meeting is exactly where a typo produces a filter
+  // that is silently ignored. Running the real parser over a filled-in URL is
+  // what catches a key the schema does not know.
+  const { filterValuesFrom, specFrom } = await import('../src/web/search-query.js');
+  const { SearchService } = await import('../src/modules/search/service.js');
+  const svc = new SearchService({} as never);
+
+  const url = new URLSearchParams(
+    'q=cathedral&mode=rent&minPrice=1000&maxPrice=2000&minBeds=2&minBaths=1'
+    + '&minSqft=600&propertyTypes=apartment&amenities=parking&amenities=balcony&sort=price_asc',
+  );
+  const parsed = svc.parse(specFrom(filterValuesFrom(url), 24));
+
+  assert.equal(parsed.q, 'cathedral', 'the words typed are the point of the search');
+  assert.equal(parsed.mode, 'rent');
+  assert.equal(parsed.minPriceCents, 100_000);
+  assert.equal(parsed.maxPriceCents, 200_000);
+  assert.equal(parsed.minBeds, 2);
+  assert.deepEqual(parsed.amenities, ['parking', 'balcony']);
+  assert.equal(parsed.sort, 'price_asc');
+});
+
+test('removing one chip keeps every other filter', async () => {
+  // The commonest confusion on a filtered search is an empty page caused by a
+  // filter set three refinements ago. The chips are the way back, so removing
+  // one must not quietly take others with it.
+  const { filterValuesFrom, chipsFor } = await import('../src/web/search-query.js');
+  const params = new URLSearchParams(
+    'q=cathedral&mode=rent&minBeds=2&amenities=parking&amenities=balcony',
+  );
+  const chips = chipsFor(params, filterValuesFrom(params));
+
+  const parking = chips.find((c) => c.label === 'parking');
+  assert.ok(parking, 'an applied amenity should have a chip');
+
+  const after = new URL(parking!.without, 'https://portage.ca').searchParams;
+  assert.deepEqual(after.getAll('amenities'), ['balcony'], 'only that one amenity goes');
+  assert.equal(after.get('mode'), 'rent');
+  assert.equal(after.get('minBeds'), '2');
+  assert.equal(after.get('q'), 'cathedral');
+});
+
+test('removing the last filter leaves a clean URL, not a dangling question mark', async () => {
+  const { filterValuesFrom, chipsFor } = await import('../src/web/search-query.js');
+  const params = new URLSearchParams('mode=rent');
+  const chips = chipsFor(params, filterValuesFrom(params));
+  assert.equal(chips[0]!.without, '/search');
+});
+
+test('the active count ignores the text query and the sort', async () => {
+  // It labels a collapsed panel. Counting the search box would say "1 filter"
+  // to someone who has set none.
+  const { filterValuesFrom, activeCount } = await import('../src/web/search-query.js');
+  assert.equal(activeCount(filterValuesFrom(new URLSearchParams('q=cathedral&sort=newest'))), 0);
+  assert.equal(activeCount(filterValuesFrom(new URLSearchParams('mode=rent&minBeds=2'))), 2);
+  assert.equal(
+    activeCount(filterValuesFrom(new URLSearchParams('amenities=parking&amenities=balcony'))),
+    1, 'a group of amenities is one filter, not one per amenity',
+  );
+});
+
+test('the sort form carries every filter except the sort itself', async () => {
+  // A GET form submits only its own fields. Without these the sort control is
+  // a filter reset with a misleading label.
+  const { hiddenFields } = await import('../src/web/search-query.js');
+  const params = new URLSearchParams(
+    'q=cathedral&mode=rent&minPrice=1000&minBeds=2&amenities=parking&amenities=balcony&sort=price_asc',
+  );
+  const fields = hiddenFields(params);
+  const asParams = new URLSearchParams(fields.map(([k, v]) => [k, v]));
+
+  assert.equal(asParams.get('q'), 'cathedral');
+  assert.equal(asParams.get('mode'), 'rent');
+  assert.equal(asParams.get('minPrice'), '1000');
+  assert.equal(asParams.get('minBeds'), '2');
+  assert.deepEqual(
+    fields.filter(([k]) => k === 'amenities').map(([, v]) => v),
+    ['parking', 'balcony'],
+    'a multi-valued filter must survive as several fields, not one',
+  );
+  assert.ok(
+    !fields.some(([k]) => k === 'sort'),
+    'the sort must NOT be carried: the select is what sets it, and a hidden '
+    + 'field of the same name would win or duplicate it',
+  );
+});
