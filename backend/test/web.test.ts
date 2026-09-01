@@ -22,10 +22,11 @@ import {
 } from '../src/lib/session.js';
 import { homePage, searchPage, listingPage, signInPage } from '../src/web/pages.js';
 import { editListingPage } from '../src/web/pages-edit.js';
+import { newListingPage } from '../src/web/pages-app.js';
 import { contentSecurityPolicy, uploadOriginOf } from '../src/web/headers.js';
 import { hasIcon } from '../src/web/icons.js';
 import {
-  AMENITIES, AMENITY_GROUPS, ROOM_TYPES, MAX_PHOTOS,
+  AMENITIES, AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES, MAX_PHOTOS,
 } from '../src/modules/listings/policy.js';
 import type { SearchResultCard } from '../src/modules/search/service.js';
 import type { ListingView } from '../src/modules/listings/service.js';
@@ -453,7 +454,9 @@ test('no page nests a form inside another form', async () => {
       maxDepth = Math.max(maxDepth, depth);
     }
     assert.equal(depth, 0, `${f}: unbalanced <form> tags`);
-    assert.equal(maxDepth, 1, `${f}: a <form> is nested inside another <form>`);
+    // `<= 1`, not `=== 1`: a template file with no forms in it is fine, and
+    // the rule under test is "never two deep" — not "always exactly one".
+    assert.ok(maxDepth <= 1, `${f}: a <form> is nested inside another <form>`);
   }
 });
 
@@ -1045,17 +1048,53 @@ test('room type is offered on a rental and absent on a sale', () => {
 // ── icons ───────────────────────────────────────────────────────────────────
 
 test('every icon a page references is defined in the sprite', () => {
-  // The silent failure this catches: <use href="#i-typo"> renders NOTHING.
-  // No error, no console message, no broken-image glyph — just a tile with a
-  // gap where its icon should be, on one amenity out of forty-two.
-  const out = edit();
-  const defined = new Set([...out.matchAll(/<symbol id="i-([a-zA-Z]+)"/g)].map((m) => m[1]!));
-  const used = new Set([...out.matchAll(/<use href="#i-([a-zA-Z]+)"/g)].map((m) => m[1]!));
+  // Two silent failures, one test. A <use href="#i-typo"> renders NOTHING —
+  // no error, no console message, no broken-image glyph, just a gap on one
+  // tile out of forty-two. And a page that uses icons but forgets to emit the
+  // sprite renders forty-two of those gaps.
+  for (const [name, out] of [['edit', edit()], ['new listing', newListing()]] as const) {
+    const defined = new Set([...out.matchAll(/<symbol id="i-([a-zA-Z]+)"/g)].map((m) => m[1]!));
+    const used = new Set([...out.matchAll(/<use href="#i-([a-zA-Z]+)"/g)].map((m) => m[1]!));
 
-  const missing = [...used].filter((n) => !defined.has(n));
-  assert.deepEqual(missing, [], `icons used but not defined: ${missing.join(', ')}`);
-  assert.ok(used.size >= 10, `expected the page to use many icons, saw ${used.size}`);
+    const missing = [...used].filter((n) => !defined.has(n));
+    assert.deepEqual(missing, [], `${name}: icons used but not defined: ${missing.join(', ')}`);
+    assert.ok(used.size >= 10, `${name}: expected many icons, saw ${used.size}`);
+  }
 });
+
+test('the new listing page offers the same picker as the edit page', () => {
+  // One component, not two. The failure this prevents is quiet and slow: the
+  // two forms drift, and an amenity added to one is missing from the other.
+  const out = newListing();
+  for (const a of AMENITIES) {
+    assert.ok(out.includes(`name="amenities" value="${a}"`), `${a} should be offered`);
+  }
+  assert.equal((out.match(/type="checkbox" name="amenities"/g) ?? []).length, AMENITIES.length);
+  assert.match(out, /data-amenities/);
+});
+
+test('a new listing starts with nothing ticked', () => {
+  // A pre-ticked amenity on a brand new listing is a claim the owner never
+  // made, on a form most people will submit without reading every tile.
+  //
+  // Matched as an ATTRIBUTE on an amenity input, not as the word: the page
+  // also contains `input:checked` in the stylesheet, `b.checked` in the
+  // script, and "Descriptions are checked against this list" in the prose. A
+  // bare substring search finds all three and proves nothing.
+  const out = newListing();
+  const ticked = [...out.matchAll(/name="amenities" value="(\w+)"\s*\n?\s*checked/g)];
+  assert.deepEqual(ticked.map((m) => m[1]), []);
+  assert.match(out, /data-n="0"/, 'and the count says so');
+});
+
+function newListing(): string {
+  return newListingPage({
+    viewer: { userId: 'o', role: 'user', csrfToken: 'tok' },
+    propertyTypes: PROPERTY_TYPES,
+    amenityGroups: AMENITY_GROUPS,
+    aiEnabled: true,
+  });
+}
 
 test('the sprite is emitted once, not once per icon', () => {
   // <use> is the point: forty-two inline copies of the same path would be

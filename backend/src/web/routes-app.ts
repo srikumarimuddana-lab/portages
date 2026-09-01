@@ -14,9 +14,7 @@ import {
   queuePage, listingReviewPage, messageReviewPage, flagsPage,
 } from './pages-admin.js';
 import { editListingPage } from './pages-edit.js';
-import {
-  AMENITIES, AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES,
-} from '../modules/listings/policy.js';
+import { AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES } from '../modules/listings/policy.js';
 import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
 import { contentSecurityPolicy, uploadOriginOf } from './headers.js';
 import { flashOf } from './form.js';
@@ -113,7 +111,7 @@ export async function newListingRoute(req: Request, app: App): Promise<Response>
   // switched-off feature is absent rather than advertised and then refused.
   const aiEnabled = await app.flags.isEnabled('ai.listing_builder', viewer.userId);
   return respond(app, newListingPage({
-    viewer, propertyTypes: PROPERTY_TYPES, amenities: AMENITIES, aiEnabled,
+    viewer, propertyTypes: PROPERTY_TYPES, amenityGroups: AMENITY_GROUPS, aiEnabled,
     ...flashOf(new URL(req.url)),
   }));
 }

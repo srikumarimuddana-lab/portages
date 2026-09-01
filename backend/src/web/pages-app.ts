@@ -14,6 +14,9 @@
  */
 import { html, type Html } from './html.js';
 import { page, money, facts, csrfField, type Flash, type Viewer } from './layout.js';
+import { iconSprite } from './icons.js';
+import { amenityPicker } from './pages-parts.js';
+import type { AmenityGroup } from '../modules/listings/policy.js';
 import type { ListingView } from '../modules/listings/service.js';
 import type { ThreadSummary, ThreadDetail } from '../modules/messaging/service.js';
 
@@ -166,13 +169,14 @@ function ownerRow(l: ListingView, viewer: Viewer): Html {
 export function newListingPage(opts: Flash & {
   viewer: Viewer;
   propertyTypes: readonly string[];
-  amenities: readonly string[];
+  amenityGroups: readonly AmenityGroup[];
   aiEnabled: boolean;
   error?: string | null;
 }): string {
   return page(
     { title: 'Post a listing', viewer: opts.viewer, path: '/dashboard/listings/new' , notice: opts.notice, error: opts.error },
     html`
+${iconSprite()}
 <div class="wrap" style="max-width:680px;padding:30px 20px 60px">
   <h1>Post a listing</h1>
   <p class="muted" style="margin-top:-4px">
@@ -190,7 +194,7 @@ export function newListingPage(opts: Flash & {
       </select>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px">
       <div class="field">
         <label for="propertyType">Property type</label>
         <select id="propertyType" name="propertyType" required>
@@ -212,7 +216,10 @@ export function newListingPage(opts: Flash & {
              placeholder="2100 Victoria Ave" autocomplete="off">
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+    ${/* auto-fit, not four fixed columns: at 390px those are 77px each, which
+          is narrower than the word "Square feet" and leaves an input nobody
+          can read what they typed into. */ null}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:14px">
       ${numField('unit', 'Unit', 'text', '3B')}
       ${numField('beds', 'Bedrooms', 'number', '2')}
       ${numField('baths', 'Bathrooms', 'number', '1')}
@@ -237,17 +244,9 @@ export function newListingPage(opts: Flash & {
         : null}
     </div>
 
-    <fieldset style="border:1px solid var(--line);border-radius:8px;padding:14px">
-      <legend class="small" style="font-weight:600;padding:0 6px">Amenities</legend>
-      <div style="display:flex;flex-wrap:wrap;gap:2px">
-        ${opts.amenities.map((a) => html`
-          <label style="display:inline-flex;align-items:center;gap:6px;font-weight:400;
-                        margin:0 12px 6px 0;font-size:13.5px">
-            <input type="checkbox" name="amenities" value="${a}" style="width:auto">
-            ${a.replace(/_/g, ' ')}
-          </label>`)}
-      </div>
-    </fieldset>
+    ${/* Nothing is ticked yet on a new listing, so the picker starts empty —
+          same component the edit page uses, so the two cannot drift. */ null}
+    ${amenityPicker(opts.amenityGroups, new Set())}
 
     <p class="small muted">
       Only tick what the property actually has. Descriptions are checked against

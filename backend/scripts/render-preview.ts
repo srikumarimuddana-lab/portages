@@ -177,7 +177,8 @@ const PAGES: Array<[string, string]> = [
   })],
   ['owner-listings-empty', ownerListingsPage({ viewer: OWNER, listings: [] })],
   ['listing-new', newListingPage({
-    viewer: OWNER, propertyTypes: PROPERTY_TYPES, amenities: AMENITIES, aiEnabled: true,
+    viewer: OWNER, propertyTypes: PROPERTY_TYPES, amenityGroups: AMENITY_GROUPS,
+    aiEnabled: true,
   })],
 
   // The draft an owner actually lands on: no photos, an unattested AI
