@@ -18,6 +18,8 @@ import { readForm, redirectTo, messageFor, FormError } from './form.js';
 import { AMENITIES, PROPERTY_TYPES, ROOM_TYPES } from '../modules/listings/policy.js';
 import { explainProblem } from '../modules/ai/listing-builder.js';
 import { REPORT_KINDS } from '../modules/trust/reports.js';
+import { ALERT_FREQUENCIES } from '../modules/search/saved.js';
+import { filterValuesFrom, specFrom } from './search-query.js';
 import type { App } from '../http/app.js';
 import type { ReportKind } from '../modules/trust/reports.js';
 
@@ -613,6 +615,93 @@ export async function reportAction(req: Request, app: App): Promise<Response> {
     });
   } catch (err) {
     return fail(safeNext(back), err);
+  }
+}
+
+// ── saved searches ──────────────────────────────────────────────────────────
+
+/**
+ * POST /account/searches — save the current search.
+ *
+ * The search is carried as the query string that produced it, and translated
+ * here through the same adapter the page uses. Storing the raw query string
+ * would mean two definitions of what a search URL means; storing an
+ * unvalidated spec would mean a saved search that fails every night inside a
+ * job nobody watches.
+ */
+export async function saveSearchAction(req: Request, app: App): Promise<Response> {
+  const back = (query: string) => (query ? `/search?${query}` : '/search');
+  let query = '';
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    query = fields.get('query').slice(0, 2000);
+
+    const values = filterValuesFrom(new URLSearchParams(query));
+    await app.savedSearches.save({
+      userId: viewer!.userId,
+      name: fields.get('name'),
+      spec: specFrom(values, 24),
+      // Alerts are OFF on save. Consent asked for in passing, bundled into
+      // another action, is the weakest kind there is — the toggle lives on
+      // the saved-searches page where it is the subject.
+      alertEnabled: false,
+    });
+
+    return redirectTo(back(query), { notice: 'Saved. Turn on alerts from your saved searches.' });
+  } catch (err) {
+    return fail(back(query), err);
+  }
+}
+
+/**
+ * POST /account/searches/:id/alert — the consent control.
+ *
+ * An unchecked checkbox posts nothing, which is exactly what makes this
+ * readable as consent: `enabled` present means the box was ticked in this
+ * submission, and its absence is a withdrawal. The service grants or revokes
+ * the consent row accordingly; this handler does not touch consent itself.
+ */
+export async function setSearchAlertAction(
+  req: Request, id: string, app: App,
+): Promise<Response> {
+  try {
+    const { viewer, fields } = await readForm(req, app);
+    const frequency = fields.get('frequency');
+    if (frequency && !ALERT_FREQUENCIES.includes(frequency as never)) {
+      throw new FormError('Choose how often from the list.');
+    }
+    const enabled = fields.bool('enabled');
+
+    await app.savedSearches.setAlert(id, viewer!.userId, {
+      enabled,
+      ...(frequency ? { frequency: frequency as never } : {}),
+      // The evidence CASL requires: what was submitted, from where, when.
+      // "The user consented" is not evidence.
+      evidence: {
+        via: 'web_form',
+        path: '/account/searches',
+        userAgent: (req.headers.get('user-agent') ?? '').slice(0, 200),
+      },
+    });
+
+    return redirectTo('/account/searches', {
+      notice: enabled
+        ? 'Alerts on. You can turn them off here at any time.'
+        : 'Alerts off. We will not email you about this search again.',
+    });
+  } catch (err) {
+    return fail('/account/searches', err);
+  }
+}
+
+/** POST /account/searches/:id/delete */
+export async function deleteSearchAction(req: Request, id: string, app: App): Promise<Response> {
+  try {
+    const { viewer } = await readForm(req, app);
+    await app.savedSearches.remove(id, viewer!.userId);
+    return redirectTo('/account/searches', { notice: 'Removed.' });
+  } catch (err) {
+    return fail('/account/searches', err);
   }
 }
 

@@ -18,6 +18,9 @@ import { editListingPage } from './pages-edit.js';
 import { verifyEmailPage, forgotPasswordPage, resetPasswordPage } from './pages-auth.js';
 import { reportListingPage } from './pages-report.js';
 import { documentsPage } from './pages-documents.js';
+import { savedSearchesPage } from './pages-saved.js';
+import { ALERT_FREQUENCIES } from '../modules/search/saved.js';
+import { filterValuesFrom, chipsFor, specToQuery } from './search-query.js';
 import { DOCUMENT_KINDS, MAX_DOCUMENT_BYTES } from '../modules/documents/policy.js';
 import { REPORT_KINDS } from '../modules/trust/reports.js';
 import { AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES } from '../modules/listings/policy.js';
@@ -208,6 +211,38 @@ export async function resetPasswordRoute(req: Request, app: App): Promise<Respon
   return respond(app, resetPasswordPage({
     email: url.searchParams.get('email')?.slice(0, 254) ?? null,
     ...flashOf(url),
+  }));
+}
+
+// ── saved searches ──────────────────────────────────────────────────────────
+
+export async function savedSearchesRoute(req: Request, app: App): Promise<Response> {
+  const viewer = await viewerOf(app, req);
+  if (!viewer) return toSignIn(req);
+
+  const searches = await app.savedSearches.list(viewer.userId);
+  return respond(app, savedSearchesPage({
+    viewer,
+    frequencies: ALERT_FREQUENCIES,
+    // A toggle that turns on an alert nothing can send is a promise the
+    // deployment cannot keep.
+    alertsAvailable: app.env.aws !== undefined,
+    searches: searches.map((s) => {
+      const query = specToQuery(s.spec);
+      const params = new URLSearchParams(query);
+      return {
+        id: s.id,
+        name: s.name,
+        href: query ? `/search?${query}` : '/search',
+        // The stored spec, described in the same words the search page uses
+        // for its chips — one vocabulary for what a filter means.
+        summary: chipsFor(params, filterValuesFrom(params)).map((c) => c.label),
+        frequency: s.frequency,
+        alertEnabled: s.alertEnabled,
+        lastRunAt: s.lastRunAt,
+      };
+    }),
+    ...flashOf(new URL(req.url)),
   }));
 }
 

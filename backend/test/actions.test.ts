@@ -669,3 +669,97 @@ test('a failed reset keeps the address so the code does not have to be re-reques
   assert.equal(loc.searchParams.get('email'), 'a@b.test');
   assert.match(loc.searchParams.get('error')!, /not valid/);
 });
+
+// ── saved searches ──────────────────────────────────────────────────────────
+
+function searchHarness() {
+  const calls = {
+    saved: [] as Array<{ name: string; alertEnabled?: boolean; spec: unknown }>,
+    alerts: [] as Array<{ id: string; enabled: boolean; evidence?: unknown }>,
+    removed: [] as string[],
+  };
+  const app = {
+    cfg: { allowedOrigins: ['https://portage.ca'] },
+    auth: {
+      async resolveSession() {
+        return {
+          userId: OWNER, sessionId: 's1', csrfHash: MATERIAL.csrfHash, role: 'user',
+          email: 'o@example.test', emailVerified: true,
+        };
+      },
+    },
+    savedSearches: {
+      async save(input: { name: string; alertEnabled?: boolean; spec: unknown }) {
+        calls.saved.push(input);
+        return { id: 'saved-1' };
+      },
+      async setAlert(id: string, _userId: string, input: { enabled: boolean; evidence?: unknown }) {
+        calls.alerts.push({ id, ...input });
+      },
+      async remove(id: string) { calls.removed.push(id); },
+    },
+  } as never;
+  return { app, calls };
+}
+
+test('saving a search never turns alerts on', async () => {
+  // The single most important line in this feature. Consent bundled into
+  // another action is the weakest kind under CASL and the hardest to defend;
+  // a "save" button that also opts you into email is exactly that.
+  const { saveSearchAction } = await import('../src/web/actions.js');
+  const { app, calls } = searchHarness();
+
+  await saveSearchAction(
+    post('/account/searches', 'name=Two+beds&query=mode%3Drent%26minBeds%3D2'), app,
+  );
+  assert.equal(calls.saved.length, 1);
+  assert.equal(calls.saved[0]!.alertEnabled, false);
+});
+
+test('the saved spec is built from the query string, not stored raw', async () => {
+  // One definition of what a search URL means. Storing the raw string would
+  // be a second, and the two would drift.
+  const { saveSearchAction } = await import('../src/web/actions.js');
+  const { app, calls } = searchHarness();
+
+  await saveSearchAction(
+    post('/account/searches', 'name=Two+beds&query=mode%3Drent%26minPrice%3D1500%26minBeds%3D2'), app,
+  );
+  const spec = calls.saved[0]!.spec as Record<string, unknown>;
+  assert.equal(spec['mode'], 'rent');
+  assert.equal(spec['minPriceCents'], 150_000, 'dollars must already be cents');
+  assert.equal(spec['minBeds'], 2);
+});
+
+test('an unticked alert box is read as a withdrawal', async () => {
+  // An unchecked checkbox posts nothing at all. That absence IS the
+  // withdrawal, and reading it as "no change" would make turning alerts off
+  // impossible from the only control that offers it.
+  const { setSearchAlertAction } = await import('../src/web/actions.js');
+  const { app, calls } = searchHarness();
+
+  await setSearchAlertAction(post('/x', 'frequency=daily'), 'saved-1', app);
+  assert.deepEqual(calls.alerts.map((a) => a.enabled), [false]);
+});
+
+test('a ticked alert box records evidence of what was submitted', async () => {
+  const { setSearchAlertAction } = await import('../src/web/actions.js');
+  const { app, calls } = searchHarness();
+
+  await setSearchAlertAction(post('/x', 'enabled=true&frequency=weekly'), 'saved-1', app);
+  assert.equal(calls.alerts[0]!.enabled, true);
+  const evidence = calls.alerts[0]!.evidence as Record<string, unknown>;
+  assert.equal(evidence['via'], 'web_form');
+  assert.equal(evidence['path'], '/account/searches');
+});
+
+test('an unknown frequency is refused rather than passed through', async () => {
+  const { setSearchAlertAction } = await import('../src/web/actions.js');
+  const { app, calls } = searchHarness();
+
+  const res = await setSearchAlertAction(
+    post('/x', 'enabled=true&frequency=hourly'), 'saved-1', app,
+  );
+  assert.equal(calls.alerts.length, 0);
+  assert.match(flash(res).error!, /how often/);
+});

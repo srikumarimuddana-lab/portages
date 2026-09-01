@@ -483,3 +483,34 @@ test('the sort form carries every filter except the sort itself', async () => {
     + 'field of the same name would win or duplicate it',
   );
 });
+
+test('a saved search round-trips: URL to spec to URL is the same search', async () => {
+  // The stored spec is in the API's vocabulary and the link on the saved
+  // searches page has to be in the page's. The two directions are written
+  // separately, so nothing but this would notice them disagreeing — and the
+  // symptom would be a saved search whose link shows an unfiltered page while
+  // claiming to be the one that was saved.
+  const { filterValuesFrom, specFrom, specToQuery } = await import('../src/web/search-query.js');
+
+  const original = 'q=cathedral&mode=rent&minPrice=1000&maxPrice=2000&minBeds=2'
+    + '&minBaths=1&minSqft=600&propertyTypes=apartment&amenities=parking'
+    + '&amenities=balcony&sort=price_asc';
+
+  const spec = specFrom(filterValuesFrom(new URLSearchParams(original)), 24);
+  const back = new URLSearchParams(specToQuery(spec));
+  const again = specFrom(filterValuesFrom(back), 24);
+
+  assert.deepEqual(again, spec, 'the second trip must produce the identical spec');
+  assert.equal(back.get('minPrice'), '1000', 'and dollars must come back as dollars');
+  assert.deepEqual(back.getAll('amenities'), ['parking', 'balcony']);
+});
+
+test('the reverse trip carries no limit or cursor into a URL', async () => {
+  // `limit` is a page-size decision the route makes, not a filter the person
+  // chose; putting it in the URL invites someone to set it to 10000.
+  const { specToQuery } = await import('../src/web/search-query.js');
+  const q = new URLSearchParams(specToQuery({ minBeds: 2, limit: 24, cursor: 'abc' }));
+  assert.equal(q.get('minBeds'), '2');
+  assert.equal(q.get('limit'), null);
+  assert.equal(q.get('cursor'), null);
+});

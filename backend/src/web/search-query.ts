@@ -187,3 +187,47 @@ export function hiddenFields(params: URLSearchParams): Array<[string, string]> {
   }
   return out;
 }
+
+/**
+ * The reverse trip: a stored spec back into a page URL.
+ *
+ * A saved search is stored in the API's vocabulary — cents, `minPriceCents` —
+ * because that is what the search module validated and will re-run. The link
+ * on the saved-searches page has to be a URL the search PAGE understands, or
+ * following it would show an unfiltered search while claiming to be the one
+ * that was saved.
+ *
+ * Round-tripping is the property that matters: `specToQuery(specFrom(v))`
+ * must produce the same search. A test asserts it, because the two directions
+ * are written separately and nothing else would notice them disagreeing.
+ */
+export function specToQuery(spec: Readonly<Record<string, unknown>> | object): string {
+  const src = spec as Record<string, unknown>;
+  const out = new URLSearchParams();
+  const str = (key: string, into = key) => {
+    const v = src[key];
+    if (typeof v === 'string' && v) out.set(into, v);
+  };
+  const dollars = (key: string, into: string) => {
+    const v = src[key];
+    if (typeof v === 'number') out.set(into, String(v / CENTS));
+  };
+  const int = (key: string) => {
+    const v = src[key];
+    if (typeof v === 'number') out.set(key, String(v));
+  };
+  const list = (key: string) => {
+    const v = src[key];
+    if (Array.isArray(v)) for (const item of v) if (typeof item === 'string') out.append(key, item);
+  };
+
+  str('q');
+  str('mode');
+  dollars('minPriceCents', 'minPrice');
+  dollars('maxPriceCents', 'maxPrice');
+  int('minBeds'); int('minBaths'); int('minSqft');
+  list('propertyTypes'); list('amenities');
+  str('sort');
+
+  return out.toString();
+}

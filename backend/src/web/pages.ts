@@ -84,6 +84,8 @@ export interface SearchPageOptions extends Flash {
   sort?: string | null;
   /** Carried into the sort form so changing it keeps every other filter. */
   hidden?: ReadonlyArray<[string, string]> | null;
+  /** "Save this search", already built. Absent on the 404 reuse. */
+  saveControl?: Html | null;
 }
 
 export function searchPage(o: SearchPageOptions): string {
@@ -107,6 +109,7 @@ ${iconSprite()}
 
   ${o.filters ?? null}
   ${o.chips ?? null}
+  ${o.saveControl ?? null}
 
   ${o.reading
     ? html`<p class="notice" style="margin-top:14px">Read as: ${o.reading}</p>`

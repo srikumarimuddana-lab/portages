@@ -20,8 +20,9 @@
 import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
 import { homePage, searchPage, listingPage, signInPage } from './pages.js';
 import { searchFilters, activeFilters } from './pages-parts.js';
+import { saveSearchControl, suggestName } from './pages-saved.js';
 import {
-  filterValuesFrom, specFrom, activeCount, chipsFor, clearHref, hiddenFields,
+  filterValuesFrom, specFrom, activeCount, chipsFor, clearHref, hiddenFields, specToQuery,
 } from './search-query.js';
 import { AMENITY_GROUPS, PROPERTY_TYPES } from '../modules/listings/policy.js';
 import { SORT_ORDERS } from '../modules/search/spec.js';
@@ -103,6 +104,10 @@ export async function searchRoute(req: Request, app: App): Promise<Response> {
   // model can never be the reason this page is slow.
   const results = await app.search.search(spec);
 
+  // Only for a signed-in visitor, and only to decide whether the control says
+  // "save" or "saved" — an anonymous search costs no extra query.
+  const saved = viewer ? await app.savedSearches.list(viewer.userId) : [];
+
   return respond(searchPage({
     viewer,
     query: values.q ?? '',
@@ -118,6 +123,15 @@ export async function searchRoute(req: Request, app: App): Promise<Response> {
       clearHref: clearHref(values),
     }),
     chips: activeFilters({ chips: chipsFor(params, values) }),
+    saveControl: saveSearchControl({
+      viewer,
+      query: params.toString(),
+      suggestedName: suggestName(values),
+      // Compared on the normalised query rather than on the raw URL, so the
+      // same search reached by a different route — a chip removed, filters in
+      // another order — is recognised as already saved.
+      alreadySaved: saved.some((s) => specToQuery(s.spec) === specToQuery(spec)),
+    }),
     ...flashOf(url),
   }));
 }

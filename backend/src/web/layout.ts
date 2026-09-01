@@ -206,6 +206,10 @@ label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-2); 
 footer.site-foot { border-top: 1px solid var(--line); margin-top: 40px; padding: 26px 0;
   color: var(--muted); font-size: 13px; }
 
+/* "save this search", under the filters */
+.save-search { margin-top: 12px; max-width: 420px; }
+.save-search label { margin-bottom: 6px; }
+
 /* search filters */
 .filters { margin-top: 14px; }
 .filter-panel { border: 1px solid var(--line); border-radius: var(--radius);
@@ -437,6 +441,7 @@ function header(viewer: Viewer | null): Html {
     <a href="/search">Search</a>
     ${viewer ? html`<a href="/dashboard/listings">My listings</a>` : null}
     ${viewer ? html`<a href="/messages">Messages</a>` : null}
+    ${viewer ? html`<a href="/account/searches">Saved</a>` : null}
     ${viewer ? html`<a href="/account/documents">Documents</a>` : null}
     ${viewer && (viewer.role === 'staff' || viewer.role === 'admin')
       ? html`<a href="/admin/queue">Moderation</a>` : null}

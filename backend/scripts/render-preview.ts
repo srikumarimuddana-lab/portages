@@ -30,6 +30,8 @@ import {
 import { reportListingPage } from '../src/web/pages-report.js';
 import { documentsPage } from '../src/web/pages-documents.js';
 import { searchFilters, activeFilters } from '../src/web/pages-parts.js';
+import { savedSearchesPage } from '../src/web/pages-saved.js';
+import { ALERT_FREQUENCIES } from '../src/modules/search/saved.js';
 import {
   filterValuesFrom, activeCount, chipsFor, clearHref, hiddenFields,
 } from '../src/web/search-query.js';
@@ -307,6 +309,20 @@ const PAGES: Array<[string, string]> = [
     },
   })],
 
+  ['saved-searches', savedSearchesPage({
+    viewer: OWNER, frequencies: ALERT_FREQUENCIES, alertsAvailable: true,
+    searches: [
+      { id: 's1', name: '2+ bed rentals under $1,500', href: '/search?mode=rent&minBeds=2',
+        summary: ['To rent', 'Up to $1,500', '2+ bed', 'parking'],
+        frequency: 'daily', alertEnabled: true, lastRunAt: AT },
+      { id: 's2', name: 'Cathedral “character home”', href: '/search?q=cathedral',
+        summary: ['To buy', 'heated garage'],
+        frequency: 'weekly', alertEnabled: false, lastRunAt: null },
+    ],
+  })],
+  ['saved-searches-empty', savedSearchesPage({
+    viewer: OWNER, frequencies: ALERT_FREQUENCIES, alertsAvailable: true, searches: [],
+  })],
   ['documents', documentsPage({
     viewer: OWNER, kinds: DOCUMENT_KINDS, maxBytes: MAX_DOCUMENT_BYTES,
     uploadsConfigured: true, now: AT,

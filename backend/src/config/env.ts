@@ -26,6 +26,14 @@ export interface Env {
   /** Public origin used for OAuth redirect URIs and post-login redirects. */
   publicOrigin: string;
   /** AWS credentials plus per-channel sender config. Absent = channel off. */
+  /**
+   * Shared secret a scheduler presents to run background jobs.
+   *
+   * Optional: without it the job endpoint refuses everything, which is the
+   * safe direction — a deployment that forgot to set it does not run alerts,
+   * rather than running them for anyone who finds the URL.
+   */
+  cronSecret?: string | undefined;
   aws?: {
     region: string;
     accessKeyId: string;
@@ -159,6 +167,13 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const awsKey = source['AWS_ACCESS_KEY_ID'];
   const awsSecret = source['AWS_SECRET_ACCESS_KEY'];
   const awsRegion = source['AWS_REGION'] ?? 'ca-central-1';
+  // Long enough that guessing is not a strategy. Checked here rather than at
+  // the endpoint so a too-short secret fails at boot, not at 3am.
+  const cronSecret = source['CRON_SECRET'] ?? '';
+  if (cronSecret && cronSecret.length < MIN_SECRET_LEN) {
+    errors.push(`CRON_SECRET must be at least ${MIN_SECRET_LEN} characters`);
+  }
+
   let aws: Env['aws'];
   if (awsKey && awsSecret) {
     aws = {
@@ -236,6 +251,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     databaseUrl,
     sessionSecret,
     storageSecret,
+    ...(cronSecret ? { cronSecret } : {}),
     pepper,
     allowedOrigins,
     // Cookies are Secure everywhere except plain local development.

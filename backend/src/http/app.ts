@@ -9,6 +9,7 @@ import { loadEnv, type Env } from '../config/env.js';
 import { createPool, type Sql } from '../db/pool.js';
 import { AuthService } from '../modules/auth/service.js';
 import { DocumentService } from '../modules/documents/service.js';
+import { SavedSearchService } from '../modules/search/saved.js';
 import { LIMITS } from '../lib/ratelimit.js';
 import { DurableRateLimiter } from '../lib/ratelimit-db.js';
 import { MapKitTokenIssuer } from '../modules/maps/mapkit.js';
@@ -66,6 +67,8 @@ export interface App {
   flags: FlagService;
   /** The model provider. `UNCONFIGURED` when no Gateway credentials are set. */
   aiProvider: ModelProvider;
+  /** Standing searches, and the alerts they can send. */
+  savedSearches: SavedSearchService;
   /** Natural-language search. Present even when AI is off; the route checks the flag. */
   chatSearch: ChatSearchService;
   /** Drafts listing copy from the owner's own facts, then fact-checks it. */
@@ -204,6 +207,11 @@ async function build(): Promise<App> {
     killSwitch: flags,
   });
 
+  // Consent lives with notify, which is also what re-checks it before a send.
+  // The saved-search service grants and revokes through the same object, so
+  // there is one record of who agreed to what.
+  const savedSearches = new SavedSearchService({ db, search, consent: notify.consent });
+
   const otp = new OtpService(db);
   const otpFlows = new OtpFlows({ db, otp, notify, auth });
   // Six digits is a million possibilities, so the per-IP bucket is not
@@ -262,7 +270,7 @@ async function build(): Promise<App> {
 
   return {
     env, db, auth, documents, mapkit, oauth, notify, otpFlows, listings,
-    gazetteer, search, uploads, storage, messaging, audit, moderation, flags,
+    gazetteer, search, savedSearches, uploads, storage, messaging, audit, moderation, flags,
     aiProvider, chatSearch, listingBuilder, aiModeration,
     aiLedger, metered, aiLimiter, reports,
     enquiryLimiter, identifierLimiter, cfg,

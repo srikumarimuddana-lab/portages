@@ -46,7 +46,7 @@ import { homeRoute, searchRoute, listingRoute, signInRoute } from './web/routes.
 import {
   signUpRoute, ownerListingsRoute, newListingRoute, editListingRoute,
   inboxRoute, threadRoute, verifyEmailRoute, forgotPasswordRoute, resetPasswordRoute,
-  newReportRoute, documentsRoute, documentDownloadRoute,
+  newReportRoute, documentsRoute, documentDownloadRoute, savedSearchesRoute,
   queueRoute, listingReviewRoute, messageReviewRoute, flagsRoute, auditRoute, mediaRoute,
 } from './web/routes-app.js';
 import {
@@ -55,9 +55,11 @@ import {
   attestListingAction, removePhotoAction, movePhotoAction, draftDescriptionAction,
   enquireAction, replyAction, blockThreadAction, reportAction,
   sendEmailCodeAction, confirmEmailCodeAction, deleteDocumentAction,
+  saveSearchAction, setSearchAlertAction, deleteSearchAction,
   forgotPasswordAction, resetPasswordAction,
   decideListingAction, decideMessageAction, dismissQueueAction, setFlagAction,
 } from './web/actions.js';
+import { runAlerts } from './http/routes/jobs.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -136,6 +138,8 @@ async function buildRoutes(): Promise<void> {
 
   const uploadDeps = { cfg: app.cfg, uploads: app.uploads, hsts: app.hsts };
   route('POST', '/api/uploads/complete', (req) => completeUpload(req, uploadDeps));
+  // Scheduled work. Guarded by a shared secret, not by being unlinked.
+  route('POST', '/api/jobs/alerts', (req) => runAlerts(req, app));
   route('POST', '/api/uploads/preview', (req) => recordPreview(req, uploadDeps));
 
   // Admin. Every one of these answers 404 to a caller without the role.
@@ -161,6 +165,7 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/reset-password', (req) => resetPasswordRoute(req, app));
   route('GET', '/account/email', (req) => verifyEmailRoute(req, app));
   route('GET', '/reports/new', (req) => newReportRoute(req, app));
+  route('GET', '/account/searches', (req) => savedSearchesRoute(req, app));
   route('GET', '/account/documents', (req) => documentsRoute(req, app));
   route('GET', '/account/documents/:id/download',
     (req, p) => documentDownloadRoute(req, p['id']!, app));
@@ -195,6 +200,11 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/account/email/confirm', (req) => confirmEmailCodeAction(req, app));
   route('POST', '/account/documents/:id/delete',
     (req, p) => deleteDocumentAction(req, p['id']!, app));
+  route('POST', '/account/searches', (req) => saveSearchAction(req, app));
+  route('POST', '/account/searches/:id/alert',
+    (req, p) => setSearchAlertAction(req, p['id']!, app));
+  route('POST', '/account/searches/:id/delete',
+    (req, p) => deleteSearchAction(req, p['id']!, app));
 
   route('POST', '/dashboard/listings', (req) => createListingAction(req, app));
   route('POST', '/dashboard/listings/:id/edit',

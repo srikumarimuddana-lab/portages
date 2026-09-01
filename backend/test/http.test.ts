@@ -563,3 +563,78 @@ test('guard: a role gate and a kill switch cannot be combined at all', async () 
     'a role gate must still win if the combination is ever forced past the type',
   );
 });
+
+// ── scheduled jobs ──────────────────────────────────────────────────────────
+
+test('the alerts job refuses everything when no secret is configured', async () => {
+  // The safe direction. A deployment that forgot to set CRON_SECRET does not
+  // run alerts, rather than running them for whoever finds the path — and this
+  // is a job that mails several thousand people.
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  let ran = false;
+  const app = {
+    env: {},
+    savedSearches: { async runAlerts() { ran = true; return { considered: 0, sent: 0 }; } },
+  } as never;
+
+  const res = await runAlerts(
+    new Request('https://portage.ca/api/jobs/alerts', {
+      method: 'POST', headers: { 'x-portage-cron': 'anything' },
+    }),
+    app,
+  );
+  assert.equal(res.status, 404);
+  assert.equal(ran, false);
+});
+
+test('the alerts job answers 404 to a wrong secret, not 401', async () => {
+  // Probing the path must teach nothing about whether it exists — the same
+  // rule the admin routes follow.
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  let ran = false;
+  const app = {
+    env: { cronSecret: 'a-long-enough-cron-secret-value' },
+    savedSearches: { async runAlerts() { ran = true; return { considered: 0, sent: 0 }; } },
+  } as never;
+
+  for (const presented of ['', 'wrong', 'a-long-enough-cron-secret-valu']) {
+    const res = await runAlerts(
+      new Request('https://portage.ca/api/jobs/alerts', {
+        method: 'POST',
+        ...(presented ? { headers: { 'x-portage-cron': presented } } : {}),
+      }),
+      app,
+    );
+    assert.equal(res.status, 404, `"${presented}" should not be accepted`);
+  }
+  assert.equal(ran, false);
+});
+
+test('the alerts job runs for the right secret', async () => {
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  const secret = 'a-long-enough-cron-secret-value';
+  let ran = false;
+  const app = {
+    env: { cronSecret: secret, publicOrigin: 'https://portage.ca' },
+    notify: {},
+    cfg: { allowedOrigins: ['https://portage.ca'] },
+    hsts: false,
+    savedSearches: {
+      async runAlerts(deps: { origin: string }) {
+        ran = true;
+        assert.equal(deps.origin, 'https://portage.ca', 'links in an email need an absolute origin');
+        return { considered: 3, sent: 1 };
+      },
+    },
+  } as never;
+
+  const res = await runAlerts(
+    new Request('https://portage.ca/api/jobs/alerts', {
+      method: 'POST', headers: { 'x-portage-cron': secret },
+    }),
+    app,
+  );
+  assert.equal(res.status, 200);
+  assert.equal(ran, true);
+  assert.deepEqual(await res.json(), { considered: 3, sent: 1 });
+});
