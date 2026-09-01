@@ -638,3 +638,101 @@ test('the alerts job runs for the right secret', async () => {
   assert.equal(ran, true);
   assert.deepEqual(await res.json(), { considered: 3, sent: 1 });
 });
+
+test('the alerts job accepts the Bearer header Vercel Cron actually sends', async () => {
+  // The contract is Vercel's, not ours, and getting it wrong is silent: the
+  // scheduler calls every hour and is refused every hour, with nothing in the
+  // product to show for it. Vercel sends a GET with
+  // `Authorization: Bearer $CRON_SECRET`.
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  const secret = 'a-long-enough-cron-secret-value';
+  let ran = false;
+  const app = {
+    env: { cronSecret: secret, publicOrigin: 'https://portage.ca' },
+    notify: {},
+    cfg: { allowedOrigins: ['https://portage.ca'] },
+    hsts: false,
+    savedSearches: { async runAlerts() { ran = true; return { considered: 0, sent: 0 }; } },
+  } as never;
+
+  const res = await runAlerts(
+    new Request('https://portage.ca/api/jobs/alerts', {
+      headers: { authorization: `Bearer ${secret}` },
+    }),
+    app,
+  );
+  assert.equal(res.status, 200);
+  assert.equal(ran, true);
+});
+
+test('a Bearer header with the wrong secret is still refused', async () => {
+  const { runAlerts } = await import('../src/http/routes/jobs.js');
+  let ran = false;
+  const app = {
+    env: { cronSecret: 'a-long-enough-cron-secret-value' },
+    savedSearches: { async runAlerts() { ran = true; return { considered: 0, sent: 0 }; } },
+  } as never;
+
+  for (const header of ['Bearer wrong', 'Bearer ', 'Basic a-long-enough-cron-secret-value']) {
+    const res = await runAlerts(
+      new Request('https://portage.ca/api/jobs/alerts', { headers: { authorization: header } }),
+      app,
+    );
+    assert.equal(res.status, 404, `"${header}" should not be accepted`);
+  }
+  assert.equal(ran, false);
+});
+
+test('the cron path is registered for GET, or the scheduler never reaches it', async () => {
+  // Vercel Cron sends GET. A route registered only for POST is a job that
+  // never runs and never errors — the failure this test exists to prevent is
+  // an empty inbox nobody can explain.
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/index.ts', import.meta.url).pathname, 'utf8');
+  assert.match(src, /route\('GET', '\/api\/jobs\/alerts'/);
+});
+
+test('the cron config points at a path the router actually serves', async () => {
+  // A vercel.json naming a path that does not exist is a job that 404s every
+  // hour in a dashboard nobody opens. Cheap to check, and the two files are
+  // edited by different hands.
+  const { readFile } = await import('node:fs/promises');
+  const cfg = JSON.parse(await readFile(
+    new URL('../examples/nextjs/vercel.json', import.meta.url).pathname, 'utf8',
+  )) as { crons: Array<{ path: string; schedule: string }> };
+  const routes = await readFile(new URL('../src/index.ts', import.meta.url).pathname, 'utf8');
+
+  assert.ok(cfg.crons.length > 0, 'expected at least one cron entry');
+  for (const c of cfg.crons) {
+    assert.ok(
+      routes.includes(`route('GET', '${c.path}'`),
+      `vercel.json schedules ${c.path}, which has no GET route`,
+    );
+    // Five fields, UTC. Vercel takes no timezone, so a schedule written for a
+    // local time is wrong in a way nothing reports.
+    assert.equal(
+      c.schedule.trim().split(/\s+/).length, 5,
+      `${c.path}: "${c.schedule}" is not a 5-field cron expression`,
+    );
+  }
+});
+
+test('the cron runs often enough for the shortest alert frequency it promises', async () => {
+  // `instant` is offered in the UI and means "at most once an hour" in the
+  // service. A daily cron would make that setting a lie — the kind that is
+  // invisible until someone asks why their instant alerts arrive at 3am.
+  const { readFile } = await import('node:fs/promises');
+  const { INTERVAL_HOURS } = await import('../src/modules/search/saved.js');
+  const cfg = JSON.parse(await readFile(
+    new URL('../examples/nextjs/vercel.json', import.meta.url).pathname, 'utf8',
+  )) as { crons: Array<{ path: string; schedule: string }> };
+
+  const alerts = cfg.crons.find((c) => c.path === '/api/jobs/alerts');
+  assert.ok(alerts, 'the alerts job should be scheduled');
+  const [minute, hour] = alerts!.schedule.trim().split(/\s+/);
+
+  const shortest = Math.min(...Object.values(INTERVAL_HOURS));
+  assert.equal(shortest, 1, 'the shortest frequency is hourly');
+  assert.equal(hour, '*', `the schedule must run every hour, got "${alerts!.schedule}"`);
+  assert.match(minute!, /^\d+$/, 'and once within that hour, at a fixed minute');
+});

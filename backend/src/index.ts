@@ -138,7 +138,9 @@ async function buildRoutes(): Promise<void> {
 
   const uploadDeps = { cfg: app.cfg, uploads: app.uploads, hsts: app.hsts };
   route('POST', '/api/uploads/complete', (req) => completeUpload(req, uploadDeps));
-  // Scheduled work. Guarded by a shared secret, not by being unlinked.
+  // Scheduled work. GET is what Vercel Cron sends; POST is for a manual run.
+  // Guarded by a shared secret either way, not by being unlinked.
+  route('GET', '/api/jobs/alerts', (req) => runAlerts(req, app));
   route('POST', '/api/jobs/alerts', (req) => runAlerts(req, app));
   route('POST', '/api/uploads/preview', (req) => recordPreview(req, uploadDeps));
 

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/jobs/alerts",
+      "schedule": "7 * * * *"
+    }
+  ],
+  "functions": {
+    "app/api/jobs/alerts/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}
