@@ -17,7 +17,7 @@
  * here decides anything: every button posts to an admin API route where the
  * role gate, the state machine and the audit writer all apply.
  */
-import { html, type Html } from './html.js';
+import { html, raw, type Html } from './html.js';
 import { page, money, csrfField, type Flash, type Viewer } from './layout.js';
 import type { QueueItem, QueueStats } from '../modules/admin/moderation.js';
 import type { FlagState, CacheState } from '../modules/flags/service.js';
@@ -45,6 +45,29 @@ function ageTone(seconds: number | null): { cls: string; text: string } {
 
 // ── the queue ───────────────────────────────────────────────────────────────
 
+/**
+ * The admin sub-navigation.
+ *
+ * Here because two of the three admin pages were reachable only by typing
+ * their URL. A console whose kill switches you have to remember the path to is
+ * a console you will not reach during the incident that needs them.
+ */
+function adminNav(here: string): Html {
+  const tabs: Array<[string, string]> = [
+    ['/admin/queue', 'Queue'],
+    ['/admin/flags', 'Kill switches'],
+    ['/admin/audit', 'Audit trail'],
+  ];
+  return html`
+<div class="tabs" style="margin:0 0 18px">
+  ${tabs.map(([href, label]) => html`
+    <a href="${href}" aria-selected="${here === href ? 'true' : 'false'}"
+       style="padding:9px 13px;font:600 14px var(--font);border-bottom:2px solid ${
+         here === href ? 'var(--accent)' : 'transparent'};margin-bottom:-1px;
+         color:${here === href ? 'var(--accent)' : 'var(--muted)'}">${label}</a>`)}
+</div>`;
+}
+
 export function queuePage(opts: Flash & {
   viewer: Viewer;
   items: QueueItem[];
@@ -57,6 +80,7 @@ export function queuePage(opts: Flash & {
     html`
 <div class="wrap" style="padding:26px 20px 60px">
   <h1>Moderation</h1>
+  ${adminNav('/admin/queue')}
 
   <div class="facts-row" style="border-bottom:0;gap:34px">
     <div class="fact"><b>${opts.stats.open}</b><span>waiting</span></div>
@@ -338,6 +362,7 @@ export function flagsPage(opts: Flash & {
     html`
 <div class="wrap" style="max-width:900px;padding:26px 20px 60px">
   <h1>Kill switches</h1>
+  ${adminNav('/admin/flags')}
   <p class="muted" style="margin-top:-4px">
     A switch takes effect everywhere within about ten seconds. No deploy.
   </p>
@@ -393,5 +418,112 @@ function flagRow(f: FlagState, canFlip: boolean, viewer: Viewer): Html {
     <strong>${f.failsafe ? 'ON' : 'OFF'}</strong>.
     ${f.note ? html` · Last note: “${f.note}”` : null}
   </p>
+</div>`;
+}
+
+// ── the audit trail ─────────────────────────────────────────────────────────
+
+/**
+ * Every staff action, newest first.
+ *
+ * WHY THIS PAGE EXISTS AT ALL. The audit log has been written on every staff
+ * decision since the moderation module was built, and nothing could read it
+ * without a database client. An append-only trail nobody looks at provides
+ * exactly one thing — the ability to answer a question after the fact — and
+ * only if someone can actually run the query.
+ *
+ * It is deliberately read-only. There is no filter that mutates, no
+ * "acknowledge", and no way to remove a row: an audit trail with an edit
+ * button is not one.
+ *
+ * `before` and `after` are rendered as compact JSON rather than prose. Prose
+ * would need a formatter per action, and the formatter for the action that
+ * actually mattered would be the one nobody had written.
+ */
+export function auditPage(opts: Flash & {
+  viewer: Viewer;
+  entries: Array<{
+    id: string; actorId: string | null; actorRole: string | null;
+    action: string; subject: string; subjectId: string | null;
+    before: Record<string, unknown> | null;
+    after: Record<string, unknown> | null;
+    at: Date;
+  }>;
+  actions: readonly string[];
+  /** The action currently filtered on, if any. */
+  action: string | null;
+  /** Cursor for the next page, or null at the end. */
+  nextBefore: string | null;
+}): string {
+  return page(
+    { title: 'Audit trail', viewer: opts.viewer, path: '/admin/audit',
+      notice: opts.notice, error: opts.error },
+    html`
+<div class="wrap" style="max-width:1000px;padding:26px 20px 60px">
+  <h1>Audit trail</h1>
+  ${adminNav('/admin/audit')}
+  <p class="muted small" style="margin-top:-4px">
+    Every staff action, newest first. Append-only — nothing here can be edited
+    or removed, including by whoever performed it.
+  </p>
+
+  ${/* A GET form: filtering is a read, so it belongs in the URL where it can
+        be bookmarked and shared with whoever asked the question. */ null}
+  <form method="get" action="/admin/audit" class="searchbar" style="margin:16px 0">
+    <select name="action" aria-label="Filter by action">
+      <option value="">Every action</option>
+      ${opts.actions.map((a) => html`
+        <option value="${a}" ${opts.action === a ? raw('selected') : null}>${a}</option>`)}
+    </select>
+    <button class="btn" type="submit">Filter</button>
+    ${opts.action ? html`<a class="btn" href="/admin/audit">Clear</a>` : null}
+  </form>
+
+  ${opts.entries.length === 0
+    ? html`<div class="empty">
+             <p>Nothing recorded${opts.action ? html` for ${opts.action}` : null} yet.</p>
+           </div>`
+    : html`
+    <div style="border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+      ${opts.entries.map(auditRow)}
+    </div>
+    ${opts.nextBefore
+      ? html`<p style="margin-top:16px">
+               <a class="btn" href="/admin/audit?${opts.action ? html`action=${opts.action}&amp;` : null}before=${opts.nextBefore}">
+                 Older entries
+               </a>
+             </p>`
+      : null}`}
+</div>`,
+  );
+}
+
+function auditRow(e: {
+  id: string; actorId: string | null; actorRole: string | null;
+  action: string; subject: string; subjectId: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  at: Date;
+}): Html {
+  const changed = e.before !== null || e.after !== null;
+  return html`
+<div style="padding:11px 14px;border-bottom:1px solid var(--line)">
+  <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+    <code style="font-size:13px;font-weight:600;color:var(--accent)">${e.action}</code>
+    <span class="small muted">${e.subject}</span>
+    ${e.subjectId
+      ? html`<a class="small" href="/admin/listings/${e.subjectId}"
+                style="font-family:ui-monospace,monospace">${e.subjectId.slice(0, 8)}</a>`
+      : null}
+    <span class="small muted" style="margin-left:auto">
+      ${e.actorRole ? html`<span class="chip">${e.actorRole}</span>` : null}
+      ${e.at.toISOString().replace('T', ' ').slice(0, 19)}
+    </span>
+  </div>
+  ${changed
+    ? html`<pre style="margin:6px 0 0;font-size:12px;color:var(--ink-2);
+                       white-space:pre-wrap;word-break:break-word">${
+             JSON.stringify({ before: e.before, after: e.after })}</pre>`
+    : null}
 </div>`;
 }

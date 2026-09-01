@@ -690,3 +690,88 @@ test('sweep: one failing delete does not abort the rest', async () => {
   await assert.doesNotReject(() => svc.sweepAbandoned());
   assert.equal(attempts, 2, 'the second delete must still be attempted');
 });
+
+// ── the document locker's reads ─────────────────────────────────────────────
+
+test('the locker lists only documents whose bytes arrived', async () => {
+  // A reserved row lists with a Download button that leads to nothing, and it
+  // counts against the per-user cap of 500 — so a run of abandoned uploads can
+  // lock someone out of their own locker.
+  //
+  // This asserts the QUERY carries the filter; that the filter is what changes
+  // the answer is proved against real PostgreSQL in test/sql/uploads.sql.
+  const { DocumentService } = await import('../src/modules/documents/service.js');
+  const sent: string[] = [];
+  const db = {
+    async query(text: string) { sent.push(text); return { rows: [], rowCount: 0 }; },
+    async transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> { return fn(db); },
+  } as never;
+
+  await new DocumentService(db, 'secret').list('owner-1');
+  const q = sent.find((t) => t.includes('FROM documents'));
+  assert.ok(q, 'list should read the documents table');
+  assert.match(q!, /status = 'stored'/);
+});
+
+test('a download is a real URL when storage is configured, not a bare token', async () => {
+  // The locker held rows and never bytes: createUpload minted a ticket with
+  // nowhere to PUT, and createDownload returned a signed token rather than
+  // something a browser could fetch.
+  const { DocumentService } = await import('../src/modules/documents/service.js');
+  const row = {
+    id: 'd1', owner_id: 'owner-1', title: 't', kind: 'other',
+    storage_key: 'docs/real', mime: 'application/pdf', bytes: 10,
+    retention_until: new Date(Date.now() + 86_400_000), created_at: new Date(),
+    deleted_at: null, share_expires_at: null, share_revoked_at: null,
+  };
+  const db = {
+    async query(text: string) {
+      return text.includes('FROM documents d')
+        ? { rows: [row], rowCount: 1 }
+        : { rows: [], rowCount: 0 };
+    },
+    async transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> { return fn(db); },
+  } as never;
+
+  const withStorage = new DocumentService(db, 'secret', {
+    storage: { presignGet: (k: string) => `https://bucket.example/${k}?sig=abc` },
+  });
+  const out = await withStorage.createDownload('d1', 'owner-1');
+  assert.equal(out.url, 'https://bucket.example/docs/real?sig=abc');
+
+  // Without a bucket there are no bytes to fetch, so the signed token stands.
+  const without = new DocumentService(db, 'secret');
+  const fallback = await without.createDownload('d1', 'owner-1');
+  assert.ok(!fallback.url.startsWith('http'), 'no bucket means no fetchable URL');
+});
+
+test('an upload ticket carries a PUT target when storage is configured', async () => {
+  const { DocumentService } = await import('../src/modules/documents/service.js');
+  const db = {
+    async query() { return { rows: [{ n: '0' }], rowCount: 1 }; },
+    async transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> { return fn(db); },
+  } as never;
+
+  const svc = new DocumentService(db, 'secret', {
+    uploads: {
+      async ticket(input: { subjectType: string; subjectId: string }) {
+        // The seam is the same one listings use, and `subjectType` already had
+        // a 'document' member — this is where it was always going.
+        assert.equal(input.subjectType, 'document');
+        return {
+          uploadUrl: `https://bucket.example/put/${input.subjectId}`,
+          completionToken: 'tok', expiresAt: 1,
+        };
+      },
+    },
+  });
+
+  const ticket = await svc.createUpload({
+    // A real uuid: buildStorageKey refuses anything else, which is what keeps
+    // an owner id out of a path where it could be guessed or traversed.
+    ownerId: 'aaaaaaaa-1111-4111-8111-111111111111', title: 'Lease', kind: 'agreement',
+    mime: 'application/pdf', bytes: 1000, filename: 'lease.pdf',
+  });
+  assert.match(ticket.uploadUrl!, /^https:\/\/bucket\.example\/put\//);
+  assert.equal(ticket.uploadToken, 'tok');
+});

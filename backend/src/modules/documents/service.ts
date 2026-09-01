@@ -20,6 +20,7 @@ import {
 } from './policy.js';
 import { signStorageUrl } from '../../lib/crypto.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
+import type { UploadTicketIssuer } from '../listings/service.js';
 import type { Sql } from '../../db/pool.js';
 
 export interface DocumentRow {
@@ -60,17 +61,46 @@ export interface CreateUploadInput {
 export interface UploadTicket {
   documentId: string;
   storageKey: string;
+  /**
+   * Where the browser PUTs the bytes. Present only when object storage is
+   * configured; without it the row exists and nothing can be stored against
+   * it, which is why the page hides its uploader in that case rather than
+   * offering a control that cannot work.
+   */
+  uploadUrl?: string;
   uploadToken: string;
   expiresAt: number;
+}
+
+/** Turns a stored key into a short-lived URL the browser may GET. */
+export interface DocumentStorage {
+  presignGet(key: string, opts: { expiresIn: number }): string;
 }
 
 export class DocumentService {
   readonly #db: Sql;
   readonly #storageSecret: string;
+  /**
+   * Mints the presigned PUT, and records the pending upload.
+   *
+   * Optional for the same reason it is optional on ListingService: without
+   * object storage configured the row can still be reserved, and the locker is
+   * simply unable to hold bytes. The seam is the SAME interface listings use —
+   * `subjectType` already had a `'document'` member, because this was always
+   * where it was going.
+   */
+  readonly #uploads: UploadTicketIssuer | null;
+  readonly #storage: DocumentStorage | null;
 
-  constructor(db: Sql, storageSecret: string) {
+  constructor(
+    db: Sql,
+    storageSecret: string,
+    deps: { uploads?: UploadTicketIssuer | null; storage?: DocumentStorage | null } = {},
+  ) {
     this.#db = db;
     this.#storageSecret = storageSecret;
+    this.#uploads = deps.uploads ?? null;
+    this.#storage = deps.storage ?? null;
   }
 
   /**
@@ -124,6 +154,24 @@ export class DocumentService {
       );
     });
 
+    if (this.#uploads) {
+      const t = await this.#uploads.ticket({
+        ownerId: input.ownerId,
+        subjectType: 'document',
+        subjectId: documentId,
+        storageKey,
+        mime: input.mime,
+        bytes: input.bytes,
+      });
+      return {
+        documentId,
+        storageKey,
+        uploadUrl: t.uploadUrl,
+        uploadToken: t.completionToken,
+        expiresAt: t.expiresAt,
+      };
+    }
+
     return {
       documentId,
       storageKey,
@@ -138,10 +186,14 @@ export class DocumentService {
   async list(ownerId: string, limit = 100, offset = 0): Promise<DocumentSummary[]> {
     const capped = Math.min(Math.max(limit, 1), 100);
     const res = await this.#db.query<DocumentRow>(
+      // Stored only. A reserved row whose bytes never arrived is not a
+      // document: it lists with a Download button that leads to nothing, and
+      // it counts against the per-user cap. The same rule the listing photo
+      // read follows, for the same reason.
       `SELECT id, owner_id, title, kind, storage_key, mime, bytes,
               retention_until, created_at, deleted_at
          FROM documents
-        WHERE owner_id = $1 AND deleted_at IS NULL
+        WHERE owner_id = $1 AND deleted_at IS NULL AND status = 'stored'
         ORDER BY created_at DESC
         LIMIT $2 OFFSET $3`,
       [ownerId, capped, Math.max(offset, 0)],
@@ -198,10 +250,15 @@ export class DocumentService {
     return {
       // Bound to the requester, not just the object: a leaked link cannot be
       // replayed by a different account.
-      url: signStorageUrl(
-        { storageKey: doc.storage_key, userId: requesterId, expiresAt },
-        this.#storageSecret,
-      ),
+      // A real presigned GET when storage is configured, so the browser can
+      // actually fetch the bytes. The signed token below is the fallback for a
+      // deployment with no bucket, where there are no bytes to fetch anyway.
+      url: this.#storage
+        ? this.#storage.presignGet(doc.storage_key, { expiresIn: DOWNLOAD_URL_TTL_SEC })
+        : signStorageUrl(
+            { storageKey: doc.storage_key, userId: requesterId, expiresAt },
+            this.#storageSecret,
+          ),
       mime: doc.mime,
       expiresAt,
     };

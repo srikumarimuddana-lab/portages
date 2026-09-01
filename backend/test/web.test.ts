@@ -119,23 +119,63 @@ test('raw is the only bypass, and it is explicit', () => {
   assert.ok(raw('x') instanceof Html);
 });
 
-test('the codebase has few raw() callers, and each is markup we built', async () => {
-  // The security argument depends on this staying enumerable. If this count
-  // climbs, the claim "XSS is structurally impossible" needs re-examining
-  // rather than restating.
-  // Discovered, not listed: a hardcoded list would have missed pages-edit.ts,
-  // which is the file that adds the most raw() calls in the codebase.
-  const perFile: string[] = [];
-  let total = 0;
-  for (const f of ['html.ts', ...(await pageFiles())]) {
-    const n = ((await readWeb(f)).match(/\braw\(/g) ?? []).length;
-    total += n;
-    if (n > 0) perFile.push(`${f}=${n}`);
+test('every raw() call passes something that cannot carry user input', async () => {
+  // This replaces a count. A cap said nothing about whether the calls were
+  // safe — it only forced a decision when the number moved, and the decision
+  // was always "raise it". What actually matters is the ARGUMENT: raw() is
+  // the one bypass around escaping, so it may only ever receive
+  //
+  //   - a string literal with no interpolation:  raw('checked')
+  //   - a SCREAMING_CASE module constant:        raw(UPLOAD_SCRIPT)
+  //
+  // Both are text this codebase wrote in full. Anything else — a parameter, a
+  // property, a template literal with a `${}` in it — is a value that could
+  // have come from a listing title, and that is precisely the XSS this whole
+  // layer is built to make impossible.
+  // html.ts is excluded and checked separately below: it DEFINES raw, and its
+  // two helpers call it on values they have just escaped themselves. Those are
+  // the primitive's internals, each with its own test above.
+  const offenders: string[] = [];
+  for (const f of await pageFiles()) {
+    const src = code(await readWeb(f));
+    for (const m of src.matchAll(/\braw\(([^)]*)\)/g)) {
+      const arg = m[1]!.trim();
+      if (/^'[^'$]*'$/.test(arg) || /^"[^"$]*"$/.test(arg)) continue;  // a literal
+      if (/^[A-Z][A-Z0-9_]*$/.test(arg)) continue;             // a module constant
+      offenders.push(`${f}: raw(${arg})`);
+    }
   }
-  assert.ok(
-    total <= 16,
-    `raw() has ${total} call sites (${perFile.join(', ')}); each is a place XSS could come from`,
-  );
+  assert.deepEqual(offenders, [], `raw() called with something that is not literal text:\n${offenders.join('\n')}`);
+});
+
+test('the escaping primitive itself calls raw in exactly four known places', async () => {
+  // Named, so the number is checkable rather than a number:
+  //   1. the definition, `export function raw(value: string)`
+  //   2/3. `classes`, on a list it has just escaped, and on '' for the empty case
+  //   4. `jsonScript`, which escapes < > & after stringifying
+  // Each of 2-4 has its own test above. A FIFTH use is a new bypass inside the
+  // one file every other file trusts, and should have to be justified here.
+  const src = code(await readWeb('html.ts'));
+  const calls = [...src.matchAll(/\braw\(/g)].length;
+  assert.equal(calls, 4, `html.ts has ${calls} raw() uses; the audited set is 4`);
+});
+
+test('every constant passed to raw() is free of interpolation', async () => {
+  // The other half. `raw(UPLOAD_SCRIPT)` is only safe while UPLOAD_SCRIPT is
+  // static text — the moment it interpolates anything, that value lands
+  // inside a <script> block with nothing between it and the parser.
+  for (const f of await pageFiles()) {
+    const src = await readWeb(f);
+    for (const m of src.matchAll(/\braw\(([A-Z][A-Z0-9_]*)\)/g)) {
+      const name = m[1]!;
+      const decl = new RegExp(`const ${name} = \`([\\s\\S]*?)\`;`).exec(src);
+      assert.ok(decl, `${f}: raw(${name}) but no template-literal constant of that name`);
+      assert.ok(
+        !decl![1]!.includes('${'),
+        `${f}: ${name} interpolates, and it is passed to raw()`,
+      );
+    }
+  }
 });
 
 // ── URLs ────────────────────────────────────────────────────────────────────

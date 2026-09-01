@@ -219,6 +219,35 @@ BEGIN
 END;
 $$;
 
+-- ── 5c. the locker lists only documents that actually hold bytes ──────────
+-- Same rule as 5b, and the same failure: a reserved row lists with a Download
+-- button that leads to nothing, and it counts against the per-user cap of 500
+-- so a run of abandoned uploads can lock someone out of their own locker.
+
+INSERT INTO documents (id, owner_id, title, kind, storage_key, mime, bytes,
+                       content_hash, retention_until, status)
+VALUES ('ffffffff-1111-4111-8111-111111111111', 'aaaaaaaa-1111-4111-8111-111111111111',
+        'Abandoned upload', 'other', 'docs/abandoned', 'application/pdf', 1000,
+        sha256('x'::bytea), now() + interval '365 days', 'pending'),
+       ('ffffffff-2222-4222-8222-222222222222', 'aaaaaaaa-1111-4111-8111-111111111111',
+        'Tenancy agreement', 'agreement', 'docs/real', 'application/pdf', 2000,
+        sha256('y'::bytea), now() + interval '365 days', 'stored');
+
+DO $$
+DECLARE n integer;
+BEGIN
+  SELECT count(*) INTO n FROM documents
+   WHERE owner_id = 'aaaaaaaa-1111-4111-8111-111111111111'
+     AND deleted_at IS NULL AND status = 'stored';
+  PERFORM assert(n = 1, 'the locker must list only stored documents, got ' || n);
+
+  SELECT count(*) INTO n FROM documents
+   WHERE owner_id = 'aaaaaaaa-1111-4111-8111-111111111111'
+     AND deleted_at IS NULL;
+  PERFORM assert(n = 2, 'the unfiltered read would list the abandoned row, got ' || n);
+END;
+$$;
+
 -- ── 6. deleting a user takes their uploads with them ───────────────────────
 -- PIPEDA: an account deletion that leaves upload records behind has not
 -- deleted the account.

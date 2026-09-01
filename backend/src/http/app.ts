@@ -100,7 +100,6 @@ async function build(): Promise<App> {
   const env = loadEnv();
   const db = await createPool(env.databaseUrl);
   const auth = new AuthService({ db, pepper: env.pepper });
-  const documents = new DocumentService(db, env.storageSecret);
   // Built before anything that writes to it: an audit trail added later has
   // no rows for the period before it.
   const audit = new AuditService(env.pepper);
@@ -139,6 +138,10 @@ async function build(): Promise<App> {
     uploads,
     audit,
   });
+  // The locker gets the same seam. Without it the service minted a ticket with
+  // nowhere to PUT and a "download URL" that was a signed token rather than
+  // something a browser could fetch — so the locker held rows and never bytes.
+  const documents = new DocumentService(db, env.storageSecret, { uploads, storage });
   // AI. Absent credentials give UNCONFIGURED, which reports 503 rather than
   // throwing — so a deployment without a Gateway key browses, searches and
   // messages exactly as it does today, and only the AI paths say they are off.

@@ -206,6 +206,18 @@ label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-2); 
 footer.site-foot { border-top: 1px solid var(--line); margin-top: 40px; padding: 26px 0;
   color: var(--muted); font-size: 13px; }
 
+/* the document locker */
+.doc-row { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center;
+  padding: 12px 14px; border-bottom: 1px solid var(--line); }
+/* min-width:0 is what lets the title ellipsis instead of forcing the row
+   wider than its container — a flex item's default min-width is auto, which
+   means "as wide as my content", which for a filename is very wide. */
+.doc-main { flex: 1 1 190px; min-width: 0; }
+.doc-main strong { display: block; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.doc-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.doc-actions form { display: contents; }
+
 /* icons */
 .ico { width: 20px; height: 20px; flex: none; vertical-align: -4px; }
 .ico-sm { width: 16px; height: 16px; }
@@ -317,6 +329,14 @@ footer.site-foot { border-top: 1px solid var(--line); margin-top: 40px; padding:
   .site nav { gap: 12px; }
 }
 @media (max-width: 560px) {
+  /* The header outgrew one line when Documents was added. Wrapping to two is
+     better than a nav that runs off the side of the screen, where the last
+     link is unreachable and nothing indicates it is there. */
+  .site .wrap { height: auto; min-height: 60px; flex-wrap: wrap;
+    padding-top: 9px; padding-bottom: 9px; row-gap: 8px; }
+  .site nav { margin-left: 0; width: 100%; gap: 10px 14px; flex-wrap: wrap; }
+  /* Actions below the title rather than squeezed beside it. */
+  .doc-actions { margin-left: 0; width: 100%; }
   /* Two amenity tiles across on a phone, and a search box that is not
      competing with the heading for the same line. */
   .amen-grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 7px; }
@@ -388,6 +408,7 @@ function header(viewer: Viewer | null): Html {
     <a href="/search">Search</a>
     ${viewer ? html`<a href="/dashboard/listings">My listings</a>` : null}
     ${viewer ? html`<a href="/messages">Messages</a>` : null}
+    ${viewer ? html`<a href="/account/documents">Documents</a>` : null}
     ${viewer && (viewer.role === 'staff' || viewer.role === 'admin')
       ? html`<a href="/admin/queue">Moderation</a>` : null}
     ${viewer

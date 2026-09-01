@@ -46,15 +46,15 @@ import { homeRoute, searchRoute, listingRoute, signInRoute } from './web/routes.
 import {
   signUpRoute, ownerListingsRoute, newListingRoute, editListingRoute,
   inboxRoute, threadRoute, verifyEmailRoute, forgotPasswordRoute, resetPasswordRoute,
-  newReportRoute,
-  queueRoute, listingReviewRoute, messageReviewRoute, flagsRoute, mediaRoute,
+  newReportRoute, documentsRoute, documentDownloadRoute,
+  queueRoute, listingReviewRoute, messageReviewRoute, flagsRoute, auditRoute, mediaRoute,
 } from './web/routes-app.js';
 import {
   signInAction, signUpAction, signOutAction,
   createListingAction, updateListingAction, transitionListingAction,
   attestListingAction, removePhotoAction, movePhotoAction, draftDescriptionAction,
   enquireAction, replyAction, blockThreadAction, reportAction,
-  sendEmailCodeAction, confirmEmailCodeAction,
+  sendEmailCodeAction, confirmEmailCodeAction, deleteDocumentAction,
   forgotPasswordAction, resetPasswordAction,
   decideListingAction, decideMessageAction, dismissQueueAction, setFlagAction,
 } from './web/actions.js';
@@ -161,6 +161,9 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/reset-password', (req) => resetPasswordRoute(req, app));
   route('GET', '/account/email', (req) => verifyEmailRoute(req, app));
   route('GET', '/reports/new', (req) => newReportRoute(req, app));
+  route('GET', '/account/documents', (req) => documentsRoute(req, app));
+  route('GET', '/account/documents/:id/download',
+    (req, p) => documentDownloadRoute(req, p['id']!, app));
   route('GET', '/media/:key', (req, p) => mediaRoute(req, p['key']!, app));
 
   route('GET', '/dashboard/listings', (req) => ownerListingsRoute(req, app));
@@ -176,6 +179,7 @@ async function buildRoutes(): Promise<void> {
   route('GET', '/admin/listings/:id', (req, p) => listingReviewRoute(req, p['id']!, app));
   route('GET', '/admin/messages/:id', (req, p) => messageReviewRoute(req, p['id']!, app));
   route('GET', '/admin/flags', (req) => flagsRoute(req, app));
+  route('GET', '/admin/audit', (req) => auditRoute(req, app));
 
   // ── form posts ─────────────────────────────────────────────────────────
   // Distinct paths from the JSON API on purpose: these accept
@@ -189,6 +193,8 @@ async function buildRoutes(): Promise<void> {
   route('POST', '/reset-password', (req) => resetPasswordAction(req, app));
   route('POST', '/account/email/send', (req) => sendEmailCodeAction(req, app));
   route('POST', '/account/email/confirm', (req) => confirmEmailCodeAction(req, app));
+  route('POST', '/account/documents/:id/delete',
+    (req, p) => deleteDocumentAction(req, p['id']!, app));
 
   route('POST', '/dashboard/listings', (req) => createListingAction(req, app));
   route('POST', '/dashboard/listings/:id/edit',

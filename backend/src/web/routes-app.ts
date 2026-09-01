@@ -11,11 +11,14 @@ import {
   signUpPage, ownerListingsPage, newListingPage, inboxPage, threadPage,
 } from './pages-app.js';
 import {
-  queuePage, listingReviewPage, messageReviewPage, flagsPage,
+  queuePage, listingReviewPage, messageReviewPage, flagsPage, auditPage,
 } from './pages-admin.js';
+import { AUDIT_ACTIONS, type AuditAction } from '../modules/audit/service.js';
 import { editListingPage } from './pages-edit.js';
 import { verifyEmailPage, forgotPasswordPage, resetPasswordPage } from './pages-auth.js';
 import { reportListingPage } from './pages-report.js';
+import { documentsPage } from './pages-documents.js';
+import { DOCUMENT_KINDS, MAX_DOCUMENT_BYTES } from '../modules/documents/policy.js';
 import { REPORT_KINDS } from '../modules/trust/reports.js';
 import { AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES } from '../modules/listings/policy.js';
 import { CSRF_COOKIE, SESSION_COOKIE, parseCookies } from '../lib/session.js';
@@ -208,6 +211,53 @@ export async function resetPasswordRoute(req: Request, app: App): Promise<Respon
   }));
 }
 
+// ── documents ───────────────────────────────────────────────────────────────
+
+export async function documentsRoute(req: Request, app: App): Promise<Response> {
+  const viewer = await viewerOf(app, req);
+  if (!viewer) return toSignIn(req);
+  const documents = await app.documents.list(viewer.userId, 100);
+  return respond(app, documentsPage({
+    viewer,
+    documents,
+    kinds: DOCUMENT_KINDS,
+    maxBytes: MAX_DOCUMENT_BYTES,
+    uploadsConfigured: app.uploads !== null,
+    ...flashOf(new URL(req.url)),
+  }));
+}
+
+/**
+ * GET /account/documents/:id/download
+ *
+ * Redirects; never proxies. `createDownload` is the one authority on access —
+ * it resolves the owner and any live share, refuses with a 404 rather than a
+ * 403 so an id cannot be confirmed, and writes the access log row. This route
+ * only turns its answer into an HTTP response.
+ */
+export async function documentDownloadRoute(
+  req: Request, id: string, app: App,
+): Promise<Response> {
+  const viewer = await viewerOf(app, req);
+  if (!viewer) return toSignIn(req);
+
+  try {
+    const out = await app.documents.createDownload(id, viewer.userId);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: out.url,
+        // The URL is short-lived and personal to this request. Caching the
+        // redirect would outlive the signature and, worse, could serve one
+        // person's link from a shared cache to the next.
+        'cache-control': 'private, no-store',
+      },
+    });
+  } catch {
+    return notFound(app, viewer);
+  }
+}
+
 // ── reports ─────────────────────────────────────────────────────────────────
 
 /**
@@ -335,6 +385,48 @@ export async function flagsRoute(req: Request, app: App): Promise<Response> {
 
   const [flags, cache] = await Promise.all([app.flags.list(), app.flags.cacheState()]);
   return respond(app, flagsPage({ viewer, flags, cache, ...flashOf(new URL(req.url)) }));
+}
+
+/**
+ * GET /admin/audit
+ *
+ * Read-only, and staff-gated like every other admin page. The trail has been
+ * written on every staff decision since the moderation module was built and
+ * has never been readable without a database client — which makes it a record
+ * nobody can consult, and a record nobody can consult is not a control.
+ */
+export async function auditRoute(req: Request, app: App): Promise<Response> {
+  const viewer = await viewerOf(app, req);
+  if (!viewer || !STAFF_ROLES.includes(viewer.role)) return notFound(app, viewer);
+
+  const url = new URL(req.url);
+  const asked = url.searchParams.get('action');
+  const action = AUDIT_ACTIONS.includes(asked as AuditAction) ? (asked as AuditAction) : null;
+  // A cursor is a row id. Anything else is discarded rather than passed to the
+  // query, where `id < $2::bigint` would fail on a non-numeric value.
+  const rawBefore = url.searchParams.get('before') ?? '';
+  const before = /^\d{1,19}$/.test(rawBefore) ? rawBefore : null;
+
+  const LIMIT = 50;
+  const entries = await app.audit.list(app.db, {
+    limit: LIMIT + 1,
+    ...(action ? { action } : {}),
+    ...(before ? { beforeId: before } : {}),
+  });
+
+  // One row over the limit was asked for; its presence is the only thing that
+  // says another page exists, and it is not itself shown.
+  const hasMore = entries.length > LIMIT;
+  const shown = hasMore ? entries.slice(0, LIMIT) : entries;
+
+  return respond(app, auditPage({
+    viewer,
+    entries: shown,
+    actions: AUDIT_ACTIONS,
+    action,
+    nextBefore: hasMore ? shown[shown.length - 1]!.id : null,
+    ...flashOf(url),
+  }));
 }
 
 // ── media ───────────────────────────────────────────────────────────────────

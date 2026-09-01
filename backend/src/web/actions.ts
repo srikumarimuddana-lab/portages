@@ -616,6 +616,26 @@ export async function reportAction(req: Request, app: App): Promise<Response> {
   }
 }
 
+// ── documents ───────────────────────────────────────────────────────────────
+
+/**
+ * POST /account/documents/:id/delete
+ *
+ * `remove` is owner-only and soft-deletes, which is what makes the retention
+ * sweeper able to collect the object afterwards rather than orphaning it.
+ */
+export async function deleteDocumentAction(
+  req: Request, documentId: string, app: App,
+): Promise<Response> {
+  try {
+    const { viewer } = await readForm(req, app);
+    await app.documents.remove(documentId, viewer!.userId);
+    return redirectTo('/account/documents', { notice: 'Deleted.' });
+  } catch (err) {
+    return fail('/account/documents', err);
+  }
+}
+
 // ── staff ───────────────────────────────────────────────────────────────────
 
 /**

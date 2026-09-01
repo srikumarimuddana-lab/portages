@@ -28,6 +28,10 @@ import {
   verifyEmailPage, forgotPasswordPage, resetPasswordPage,
 } from '../src/web/pages-auth.js';
 import { reportListingPage } from '../src/web/pages-report.js';
+import { documentsPage } from '../src/web/pages-documents.js';
+import { auditPage } from '../src/web/pages-admin.js';
+import { DOCUMENT_KINDS, MAX_DOCUMENT_BYTES } from '../src/modules/documents/policy.js';
+import { AUDIT_ACTIONS } from '../src/modules/audit/service.js';
 import { REPORT_KINDS } from '../src/modules/trust/reports.js';
 import {
   AMENITIES, AMENITY_GROUPS, PROPERTY_TYPES, ROOM_TYPES,
@@ -279,6 +283,39 @@ const PAGES: Array<[string, string]> = [
     },
   })],
 
+  ['documents', documentsPage({
+    viewer: OWNER, kinds: DOCUMENT_KINDS, maxBytes: MAX_DOCUMENT_BYTES,
+    uploadsConfigured: true, now: AT,
+    documents: [
+      { id: 'd1', title: 'Tenancy agreement — 2100 Victoria Ave', kind: 'agreement',
+        mime: 'application/pdf', bytes: 412_000, createdAt: AT, isOwner: true,
+        retentionUntil: new Date(AT.getTime() + 700 * 86_400_000) },
+      { id: 'd2', title: 'Move-in inspection photos', kind: 'inspection',
+        mime: 'image/jpeg', bytes: 2_600_000, createdAt: AT, isOwner: true,
+        retentionUntil: new Date(AT.getTime() + 21 * 86_400_000) },
+      { id: 'd3', title: 'Rent receipt, August', kind: 'receipt',
+        mime: 'application/pdf', bytes: 88_000, createdAt: AT, isOwner: true,
+        retentionUntil: new Date(AT.getTime() + 400 * 86_400_000) },
+    ],
+  })],
+  ['documents-empty', documentsPage({
+    viewer: OWNER, kinds: DOCUMENT_KINDS, maxBytes: MAX_DOCUMENT_BYTES,
+    uploadsConfigured: true, documents: [], now: AT,
+  })],
+  ['admin-audit', auditPage({
+    viewer: ADMIN, actions: AUDIT_ACTIONS, action: null, nextBefore: '900',
+    entries: [
+      { id: '904', actorId: 'a', actorRole: 'admin', action: 'flag.set',
+        subject: 'flag', subjectId: 'notify.email', at: AT,
+        before: { enabled: true }, after: { enabled: false, note: 'SES bounce spike' } },
+      { id: '903', actorId: 's', actorRole: 'staff', action: 'listing.reject',
+        subject: 'listing', subjectId: 'bbbbbbbb-1111-4111-8111-111111111111', at: AT,
+        before: null, after: { reason: 'Photos are of a different property.' } },
+      { id: '902', actorId: 's', actorRole: 'staff', action: 'message.release',
+        subject: 'message', subjectId: 'cccccccc-1111-4111-8111-111111111111', at: AT,
+        before: null, after: null },
+    ],
+  })],
   ['admin-queue', queuePage({
     viewer: STAFF, state: 'open',
     stats: { open: 4, openListings: 2, openMessages: 2, oldestWaitingSec: 4 * 86400,
