@@ -17,6 +17,42 @@ set-up: what to configure, in what order, and how to tell whether it worked.
 
 ---
 
+## 0. The Pro plan is a hard requirement, not a preference
+
+**Checked 2026-09-01 against the connected Vercel account: the team
+`srikumarimuddana-labs-projects` is on `hobby`, and no Portage project exists
+yet.** Both need to change before any of this works.
+
+On the Hobby plan **cron jobs may only run once per day**, and a more frequent
+expression does not degrade — it **fails the deployment** with `Hobby accounts
+are limited to daily cron jobs`. `/api/jobs/alerts` is scheduled `7 * * * *`,
+so the first production deploy on Hobby fails outright, and the two daily jobs
+never get created either.
+
+Two consequences beyond the deploy failing:
+
+- **Hourly alerts are the product promise.** The shortest frequency a saved
+  search can be set to is `instant`, which the service treats as "at most once
+  an hour". Dropping the cron to daily would not be a degraded schedule, it
+  would make a setting the user chose into a false statement.
+- **Hobby fires within the *hour*, not the minute.** A daily `0 8 * * *` may
+  invoke any time between 08:00:00 and 08:59:59. That is fine for expiry and
+  purge in isolation, but it dissolves the twenty-minute separation between
+  them described below — on Hobby they can overlap, or run in either order.
+  On Pro a cron fires within its *minute*, and the separation holds.
+
+Vercel's own docs pages are unreachable from this environment (egress-blocked),
+so the frequency limit and its error message come from search extraction of
+Vercel's documentation and changelog rather than from the pages themselves —
+the same caveat that applies to the Apple licence research. Treat the *shape*
+as verified from two independent sources and confirm the exact wording when the
+account is upgraded. One detail worth re-checking then: Vercel's changelog of
+2026-01-20 says per-team cron limits were removed and the per-project cap
+raised to 100 on every plan, which if accurate means the **count** of three
+jobs is not itself a problem on any plan. The **frequency** still is.
+
+---
+
 ## 1. Set `CRON_SECRET`
 
 In the Vercel project → **Settings → Environment Variables**, add:
@@ -70,7 +106,8 @@ They are twenty minutes apart rather than together so that a slow purge cannot
 delay the expiry, and so the two are separable in a log.
 
 On the Pro plan a cron fires **within** its minute, not at an exact second.
-Nothing here depends on precision.
+Nothing here depends on that precision — but the twenty-minute separation does
+depend on the *minute* being honoured, which is a Pro guarantee. See §0.
 
 ### Why expiry and purge are separate jobs
 
@@ -108,9 +145,21 @@ no cron, no clue. If the job never runs, check this first.
 
 ## 4. Verify it works
 
-**Before relying on the schedule**, call it by hand. `GET` is what the
-scheduler sends; `POST` does the same thing and is the honest method for a
-manual run:
+**First, check the schedules actually registered.** A `vercel.json` in the
+wrong directory is ignored silently (§3), and this is the cheapest way to find
+out — it reads what the *deployment* has, not what the file says:
+
+```
+vercel crons ls
+```
+
+Three rows, or the file is not being read. `vercel crons run /api/jobs/alerts`
+then triggers a deployed job on demand, with the scheduler's own credentials,
+which is a truer test than any request you construct by hand.
+
+**Then call it by hand**, which is the only way to check the refusals below.
+`GET` is what the scheduler sends; `POST` does the same thing and is the honest
+method for a manual run:
 
 ```
 curl -i -X POST https://<your-domain>/api/jobs/alerts \
