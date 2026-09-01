@@ -123,12 +123,19 @@ BEGIN
 END;
 $$;
 
--- ── 3. the record outlives the account it was made for ─────────────────────
+-- ── 3. the record outlives the account, the identity does not ──────────────
+--
 -- No foreign keys, matching audit_log: a cascade would erase what was spent
--- on someone's behalf at exactly the moment it matters.
+-- on someone's behalf at exactly the moment it matters. But "the row must
+-- survive" is not "the uuid must survive", and until 019 nothing distinguished
+-- them — a deleted user's id simply stayed here, because with no FK there was
+-- nothing to null it out. `redact_deleted_actor` does it now.
+--
+-- What is left answers "what did this cost and what was it for", which is the
+-- entire reason the table exists, without answering "who".
 
 DO $$
-DECLARE n int; actor uuid;
+DECLARE n int; actor uuid; subj text;
 BEGIN
   INSERT INTO ai_calls (task, provider, model, outcome, actor_id, subject_type, subject_id)
   VALUES ('listing_builder', 'gw', 'm', 'ok',
@@ -140,13 +147,18 @@ BEGIN
   PERFORM assert(n = 1, 'the spend record must outlive the account');
 
   SELECT actor_id INTO actor FROM ai_calls WHERE task = 'listing_builder';
-  PERFORM assert(actor IS NOT NULL,
-    'and keeps the id — with no FK there is nothing to null it out');
+  PERFORM assert(actor IS NULL, 'but must not still name the deleted account');
+
+  SELECT subject_id INTO subj FROM ai_calls WHERE task = 'listing_builder';
+  PERFORM assert(subj = 'some-listing-id',
+    'while everything the record exists to answer survives intact');
 
   SELECT count(*) INTO n
     FROM information_schema.table_constraints
    WHERE table_name = 'ai_calls' AND constraint_type = 'FOREIGN KEY';
-  PERFORM assert(n = 0, 'ai_calls must carry no foreign keys');
+  PERFORM assert(n = 0,
+    'and ai_calls must still carry no foreign keys — the redaction is a '
+    || 'trigger on users precisely so this table needs none');
 END;
 $$;
 

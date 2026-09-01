@@ -25,7 +25,13 @@ import type { Sql } from '../../db/pool.js';
 
 export interface DocumentRow {
   id: string;
-  owner_id: string;
+  /**
+   * NULL is a tombstone: the owning account was deleted and the row survives
+   * only for the append-only access log. Every user-facing query filters on
+   * `owner_id = $1`, which never matches NULL — `assertAccess` is the one
+   * that looks a document up by id alone, and `canAccess` refuses it there.
+   */
+  owner_id: string | null;
   title: string;
   kind: DocumentKind;
   storage_key: string;
@@ -327,12 +333,18 @@ export class DocumentService {
   /**
    * Documents whose bytes should no longer exist.
    *
-   * TWO CATEGORIES, and the second was missing. `retention_until <= now()` is
-   * the PIPEDA one: the purpose has expired. But `remove()` soft-deletes and
-   * its comment promises "the retention job purges the bytes" — and this
-   * query used to filter `deleted_at IS NULL`, so a document the OWNER
-   * deleted was never collected and its bytes stayed in the bucket forever.
-   * The comment described the opposite of what the code did.
+   * THREE CATEGORIES:
+   *
+   *   - `retention_until <= now()` — the PIPEDA one: the purpose has expired.
+   *   - `deleted_at IS NOT NULL` — the owner deleted it. This was missing, and
+   *     `remove()` soft-deletes with a comment promising "the retention job
+   *     purges the bytes", so an owner-deleted document was never collected
+   *     and its bytes stayed in the bucket. The comment described the opposite
+   *     of what the code did.
+   *   - `owner_id IS NULL` — the account was deleted, and the row survives
+   *     only as a tombstone for the append-only access log. Immediately due:
+   *     a retention period belonging to an account that no longer exists is
+   *     not a reason to keep anything.
    *
    * Returns the id as well as the key, because purging has to record itself
    * against the row or the job re-reads the same documents every night.
@@ -341,7 +353,9 @@ export class DocumentService {
     const res = await this.#db.query<{ id: string; storage_key: string }>(
       `SELECT id, storage_key FROM documents
         WHERE purged_at IS NULL
-          AND (retention_until <= now() OR deleted_at IS NOT NULL)
+          AND (retention_until <= now()
+               OR deleted_at IS NOT NULL
+               OR owner_id IS NULL)
         ORDER BY retention_until
         LIMIT $1`,
       [Math.min(Math.max(limit, 1), 1000)],

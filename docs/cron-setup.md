@@ -178,19 +178,40 @@ were in, and it looks identical to one that works.
 
 ---
 
-## Known gap: erasure vs the access log
+## Erasure, and what the purge finishes
 
-Deleting a **user** who has ever uploaded a document *and opened it* currently
-fails. `documents` cascades from `users`, `document_access_log` cascades from
-`documents`, and that log is append-only at the database level — so the cascade
-is refused and the whole delete aborts.
+Account deletion and this job are two halves of one path, so it is worth
+knowing where the boundary is.
 
-This is asserted in `test/sql/uploads.sql` §8 so it is visible rather than
-latent. It is not resolved here, because resolving it is a decision rather than
-a fix: either the trail survives an account deletion in pseudonymised form
-(likely right — it records staff and third-party access, not only the owner's),
-or the trigger is relaxed to permit a cascade. When that decision is made, the
-assertion fails, which is the intended way to be reminded.
+Deleting a **user** used to fail outright if they had ever uploaded a document
+and opened it: `documents` cascaded from `users`, `document_access_log`
+cascades from `documents`, and that log is append-only — so the cascade was
+refused and the whole delete aborted. Migration `019_erasure.sql` resolves it.
+The trail survives, in pseudonymised form, and the account goes:
 
-Note that the **document** purge above is unaffected: it blanks rows rather
-than deleting them, precisely because of this constraint.
+- **The document becomes a tombstone.** `owner_id` is set to NULL rather than
+  the row being deleted, so the access log still has something to point at.
+- **The identity is redacted everywhere it was recorded.**
+  `document_access_log.actor_id` by the foreign key, `audit_log.actor_id` and
+  `ai_calls.actor_id` by a trigger on `users` — those two carry no foreign key
+  by design, so nothing was erasing them before.
+- **This job finishes it.** A tombstone is due immediately (`owner_id IS NULL`
+  is one of the three purge categories), so the next nightly run destroys the
+  bytes and blanks the title. Until it does, the document still exists — with
+  no way to read it, because `canAccess` refuses a NULL owner.
+
+An append-only table can now name columns that are **redactable to NULL**, and
+that is the only mutation it will ever accept: `forbid_mutation('actor_id')`.
+Setting such a column to a *different* value is still refused, as is any other
+column, as is DELETE. Erasure removes an identity; it must not be able to
+substitute one, or the log could be made to accuse somebody else.
+
+`test/sql/uploads.sql` §10 asserts the general rule against the catalogue: an
+append-only table may only carry `RESTRICT`/`NO ACTION`, or `SET NULL` on a
+column its trigger names. A future table with a plain `CASCADE` fails the gate
+when it is added, rather than the first time somebody tries to delete an
+account.
+
+What survives an erasure is "some document was opened at 14:02", plus — in
+`audit_log` — the `actor_role` that did it. A staff decision remains
+attributable to *staff* after that employee's own account is erased.

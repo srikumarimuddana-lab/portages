@@ -336,34 +336,191 @@ BEGIN
 END;
 $$;
 
--- ── 8. KNOWN GAP: an account with a logged document cannot be deleted ──────
+-- ── 8. an account CAN be deleted, and the trail survives it ───────────────
 --
--- Two rules that are each correct and collide. `documents.owner_id` cascades
--- from `users`, and `document_access_log.document_id` cascades from
--- `documents` — but that log is append-only at the database level, so the
--- cascade is refused and the user delete fails outright.
+-- This used to assert the opposite. `documents.owner_id` cascaded from
+-- `users` and `document_access_log.document_id` cascades from `documents`,
+-- which is append-only — so the cascade was refused and deleting a user with
+-- any logged document failed outright. The PIPEDA erasure path did not work
+-- for them.
 --
--- The consequence is that the PIPEDA erasure path does not work for anyone who
--- ever uploaded a document and opened it. Section 6 above passes only because
--- its fixture has no log rows; the moment one exists, deletion stops.
---
--- This asserts the CURRENT behaviour so the gap is visible and tested rather
--- than latent. It is not an endorsement: resolving it needs a decision about
--- whether the trail survives an account deletion in pseudonymised form (likely
--- right — it records staff and third-party access, not only the owner's) or
--- whether the trigger should permit a cascade. When that decision is made,
--- THIS ASSERTION WILL FAIL, which is the intended way to be reminded.
+-- Migration 019 resolves it by making neither rule give way. The document
+-- becomes a tombstone (owner_id SET NULL), so nothing is deleted out from
+-- under the log; the retention job then destroys the bytes and blanks the
+-- title. What is retained identifies nobody.
 
 DO $$
-DECLARE refused boolean := false;
+DECLARE n integer; owner_left uuid; actor_left uuid;
+BEGIN
+  DELETE FROM users WHERE id = 'bbbbbbbb-9999-4999-8999-999999999999';
+
+  SELECT count(*) INTO n FROM users
+   WHERE id = 'bbbbbbbb-9999-4999-8999-999999999999';
+  PERFORM assert(n = 0, 'the account must actually be gone');
+
+  -- The trail survives, pseudonymised: the actor was already ON DELETE SET
+  -- NULL, and now so is the document owner.
+  SELECT count(*) INTO n FROM document_access_log
+   WHERE document_id = 'ffffffff-6666-4666-8666-666666666666';
+  PERFORM assert(n = 1, 'the access trail must survive the deletion');
+
+  SELECT actor_id INTO actor_left FROM document_access_log
+   WHERE document_id = 'ffffffff-6666-4666-8666-666666666666';
+  PERFORM assert(actor_left IS NULL, 'and must no longer name the actor');
+
+  SELECT owner_id INTO owner_left FROM documents
+   WHERE id = 'ffffffff-6666-4666-8666-666666666666';
+  PERFORM assert(owner_left IS NULL, 'the document must survive as a tombstone with no owner');
+END;
+$$;
+
+-- ── 9. a tombstone is immediately due for purging ──────────────────────────
+-- Its retention period belongs to an account that no longer exists, so it is
+-- not a reason to keep anything. The job destroys the bytes on its next run.
+
+DO $$
+DECLARE n integer;
+BEGIN
+  SELECT count(*) INTO n FROM documents
+   WHERE purged_at IS NULL
+     AND (retention_until <= now() OR deleted_at IS NOT NULL OR owner_id IS NULL)
+     AND id = 'ffffffff-6666-4666-8666-666666666666';
+  PERFORM assert(n = 1,
+    'an owner-less document must be a purge candidate immediately, not in a year');
+END;
+$$;
+
+-- ── 10. no append-only table carries a referential action ────────────────
+--
+-- The general form of the bug, asserted against the catalogue rather than
+-- against the one case that happened to be found. `forbid_mutation` fires on
+-- UPDATE as well as DELETE, so CASCADE and SET DEFAULT are refused outright,
+-- and SET NULL is refused unless the trigger names that column as redactable.
+-- Only NO ACTION ('a'), RESTRICT ('r') and a permitted SET NULL ('n') can
+-- coexist with it.
+--
+-- A future append-only table with any other foreign key would reintroduce
+-- exactly this failure, and it would surface the first time somebody tried to
+-- delete an account rather than when the table was added.
+
+DO $$
+DECLARE bad text;
+BEGIN
+  WITH guard AS (
+    -- tgargs is NUL-terminated strings, and text cannot hold a NUL — so read
+    -- it through `escape`, which renders the separator as a literal \000.
+    SELECT t.tgrelid AS relid,
+           string_to_array(encode(t.tgargs, 'escape'), '\000') AS redactable
+      FROM pg_trigger t
+      JOIN pg_proc p ON p.oid = t.tgfoid
+     WHERE NOT t.tgisinternal AND p.proname = 'forbid_mutation'
+  )
+  SELECT string_agg(DISTINCT
+           c.relname || '.' || k.conname || ' (' || k.confdeltype::text || ')', ', ')
+    INTO bad
+    FROM pg_constraint k
+    JOIN pg_class c ON c.oid = k.conrelid
+    JOIN guard g ON g.relid = c.oid
+   WHERE k.contype = 'f'
+     AND k.confdeltype NOT IN ('a', 'r')
+     AND (
+       k.confdeltype <> 'n'
+       -- SET NULL is permitted only when EVERY column it nulls is one the
+       -- trigger allows to be redacted. A composite key with one unnamed
+       -- column would fail at delete time, not here, without this.
+       OR EXISTS (
+         SELECT 1 FROM unnest(k.conkey) AS col
+          WHERE NOT ((SELECT attname FROM pg_attribute
+                       WHERE attrelid = c.oid AND attnum = col)
+                     = ANY (g.redactable)))
+     );
+
+  PERFORM assert(bad IS NULL,
+    'an append-only table can hold a referential action only when the trigger '
+    || 'permits the mutation it performs — RESTRICT/NO ACTION, or SET NULL on '
+    || 'a column named redactable. Anything else is refused at delete time: '
+    || coalesce(bad, ''));
+END;
+$$;
+
+-- ── 11. redaction is to NULL, and to nothing else ──────────────────────────
+--
+-- The permission granted in 019 is narrow on purpose. If it permitted any
+-- change to actor_id, the append-only guarantee would be gone: whoever the
+-- log accuses could reassign the entry to somebody else, which is a worse
+-- outcome than not being able to erase it. Erasure removes an identity; it
+-- does not substitute one.
+
+DO $$
+DECLARE raised boolean := false; n integer;
 BEGIN
   BEGIN
-    DELETE FROM users WHERE id = 'bbbbbbbb-9999-4999-8999-999999999999';
-  EXCEPTION WHEN OTHERS THEN refused := true;
+    UPDATE document_access_log
+       SET actor_id = 'aaaaaaaa-1111-4111-8111-111111111111'
+     WHERE document_id = 'ffffffff-6666-4666-8666-666666666666';
+  EXCEPTION WHEN OTHERS THEN raised := true;
   END;
-  PERFORM assert(refused,
-    'deleting a user with a logged document is currently refused — if this now '
-    || 'succeeds, the erasure gap has been fixed and this contract needs updating');
+  PERFORM assert(raised, 'a redacted entry must not be reassigned to somebody else');
+
+  SELECT count(*) INTO n FROM document_access_log
+   WHERE document_id = 'ffffffff-6666-4666-8666-666666666666'
+     AND actor_id IS NOT NULL;
+  PERFORM assert(n = 0, 'and the actor must still be NULL');
+
+  -- Nor may a redaction smuggle another column along with it.
+  raised := false;
+  BEGIN
+    UPDATE document_access_log SET actor_id = NULL, action = 'delete'
+     WHERE document_id = 'ffffffff-6666-4666-8666-666666666666';
+  EXCEPTION WHEN OTHERS THEN raised := true;
+  END;
+  PERFORM assert(raised, 'a redaction must not carry another column with it');
+END;
+$$;
+
+-- ── 12. the logs with no foreign keys are redacted too ─────────────────────
+--
+-- `audit_log` and `ai_calls` deliberately carry no reference to `users`: what
+-- was decided and what was spent must outlive the account, and the actor is
+-- not always a user. That is a reason to keep the ROW, not a reason to keep
+-- the uuid — and with no foreign key, nothing was erasing it. A trigger on
+-- users does it now.
+
+INSERT INTO users (id, email, password_hash, status, email_verified_at)
+VALUES ('bbbbbbbb-7777-4777-8777-777777777777', 'erase-me@example.com',
+        'x', 'active', now());
+
+INSERT INTO audit_log (actor_id, actor_role, action, subject, subject_id)
+VALUES ('bbbbbbbb-7777-4777-8777-777777777777', 'staff', 'listing.approve',
+        'listing', 'bbbbbbbb-1111-4111-8111-111111111111');
+
+INSERT INTO ai_calls (task, provider, model, outcome, actor_id)
+VALUES ('chat_search', 'anthropic', 'test-model', 'ok',
+        'bbbbbbbb-7777-4777-8777-777777777777');
+
+DO $$
+DECLARE n integer; role_left text;
+BEGIN
+  DELETE FROM users WHERE id = 'bbbbbbbb-7777-4777-8777-777777777777';
+
+  SELECT count(*) INTO n FROM audit_log
+   WHERE actor_id = 'bbbbbbbb-7777-4777-8777-777777777777';
+  PERFORM assert(n = 0, 'the audit trail must not keep a deleted user''s id');
+
+  SELECT count(*) INTO n FROM ai_calls
+   WHERE actor_id = 'bbbbbbbb-7777-4777-8777-777777777777';
+  PERFORM assert(n = 0, 'nor must the AI spend log');
+
+  -- The record itself survives, and so does the accountability in it: "a
+  -- staff member approved this listing" is intact without naming anyone.
+  SELECT count(*) INTO n FROM audit_log WHERE action = 'listing.approve';
+  PERFORM assert(n = 1, 'but the decision itself must survive the deletion');
+
+  SELECT actor_role INTO role_left FROM audit_log WHERE action = 'listing.approve';
+  PERFORM assert(role_left = 'staff', 'with the role that made it still recorded');
+
+  SELECT count(*) INTO n FROM ai_calls WHERE model = 'test-model';
+  PERFORM assert(n = 1, 'and the cost must still be attributable to a task');
 END;
 $$;
 
