@@ -4,10 +4,21 @@
     {
       "path": "/api/jobs/alerts",
       "schedule": "7 * * * *"
+    },
+    {
+      "path": "/api/jobs/expire-listings",
+      "schedule": "20 8 * * *"
+    },
+    {
+      "path": "/api/jobs/purge-documents",
+      "schedule": "40 8 * * *"
     }
   ],
   "functions": {
     "app/api/jobs/alerts/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/jobs/purge-documents/route.ts": {
       "maxDuration": 60
     }
   }

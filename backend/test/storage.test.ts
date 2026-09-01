@@ -734,7 +734,10 @@ test('a download is a real URL when storage is configured, not a bare token', as
   } as never;
 
   const withStorage = new DocumentService(db, 'secret', {
-    storage: { presignGet: (k: string) => `https://bucket.example/${k}?sig=abc` },
+    storage: {
+      presignGet: (k: string) => `https://bucket.example/${k}?sig=abc`,
+      async delete() { /* unused here */ },
+    },
   });
   const out = await withStorage.createDownload('d1', 'owner-1');
   assert.equal(out.url, 'https://bucket.example/docs/real?sig=abc');
@@ -774,4 +777,115 @@ test('an upload ticket carries a PUT target when storage is configured', async (
   });
   assert.match(ticket.uploadUrl!, /^https:\/\/bucket\.example\/put\//);
   assert.equal(ticket.uploadToken, 'tok');
+});
+
+// ── retention ───────────────────────────────────────────────────────────────
+
+function purgeHarness(over: { due?: Array<{ id: string; storage_key: string }>; failOn?: string } = {}) {
+  const deleted: string[] = [];
+  const updates: string[] = [];
+  const queries: string[] = [];
+  const db = {
+    async query(text: string, p?: readonly unknown[]) {
+      queries.push(text);
+      if (text.includes('SELECT id, storage_key FROM documents')) {
+        return { rows: over.due ?? [], rowCount: (over.due ?? []).length };
+      }
+      if (text.includes('UPDATE documents')) updates.push(String(p?.[0]));
+      return { rows: [], rowCount: 1 };
+    },
+    async transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> { return fn(db); },
+  } as never;
+  const storage = {
+    presignGet: () => 'https://x',
+    async delete(key: string) {
+      if (key === over.failOn) throw new Error('storage unreachable');
+      deleted.push(key);
+    },
+  };
+  return { db, storage, deleted, updates, queries };
+}
+
+test('a document the owner deleted is purged, not left in the bucket forever', async () => {
+  // The bug this fixes. `remove()` soft-deletes and its comment promises "the
+  // retention job purges the bytes" — and the query filtered `deleted_at IS
+  // NULL`, so an owner-deleted document was never collected. The comment
+  // described the opposite of what the code did.
+  const { DocumentService } = await import('../src/modules/documents/service.js');
+  const h = purgeHarness();
+  await new DocumentService(h.db, 's', { storage: h.storage }).collectExpired();
+
+  const q = h.queries.find((t) => t.includes('SELECT id, storage_key FROM documents'))!;
+  assert.match(q, /deleted_at IS NOT NULL/, 'an owner deletion must make it a candidate');
+  assert.match(q, /retention_until <= now\(\)/, 'and so must an expired retention period');
+  assert.match(q, /purged_at IS NULL/, 'and a purged row must never be one again');
+});
+
+test('the bytes go before the row is marked, never the other way round', async () => {
+  // A crash between the two is the case that decides this. Bytes-then-row
+  // leaves a row still marked unpurged pointing at an object already gone —
+  // the next run retries, the storage delete is idempotent, self-healing.
+  // Row-then-bytes leaves an object nothing points at and nothing will look
+  // for again: undeleted personal information the system believes it deleted.
+  const { DocumentService } = await import('../src/modules/documents/service.js');
+  const order: string[] = [];
+  const db = {
+    async query(text: string) {
+      if (text.includes('SELECT id, storage_key')) {
+        return { rows: [{ id: 'd1', storage_key: 'docs/a' }], rowCount: 1 };
+      }
+      if (text.includes('UPDATE documents')) order.push('row');
+      return { rows: [], rowCount: 1 };
+    },
+    async transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> { return fn(db); },
+  } as never;
+  const storage = {
+    presignGet: () => 'x',
+    async delete() { order.push('bytes'); },
+  };
+
+  await new DocumentService(db, 's', { storage }).purgeExpired();
+  assert.deepEqual(order, ['bytes', 'row']);
+});
+
+test('a storage failure does not mark the row purged, and does not stop the run', async () => {
+  // Marking it would be a lie the system never revisits. Stopping would let
+  // one unreachable object hold up the retention of every document behind it.
+  const { DocumentService } = await import('../src/modules/documents/service.js');
+  const h = purgeHarness({
+    due: [
+      { id: 'd1', storage_key: 'docs/broken' },
+      { id: 'd2', storage_key: 'docs/fine' },
+    ],
+    failOn: 'docs/broken',
+  });
+
+  const out = await new DocumentService(h.db, 's', { storage: h.storage }).purgeExpired();
+  assert.deepEqual(out, { purged: 1, failed: 1 });
+  assert.deepEqual(h.deleted, ['docs/fine']);
+  assert.deepEqual(h.updates, ['d2'], 'only the one whose bytes actually went');
+});
+
+test('the purge blanks the title, which is often the most sensitive field', async () => {
+  // The row survives because document_access_log references it and is
+  // append-only. What must not survive is the personal part — and a title is
+  // user-entered: "Eviction notice — 2100 Victoria Ave".
+  const { DocumentService } = await import('../src/modules/documents/service.js');
+  const h = purgeHarness({ due: [{ id: 'd1', storage_key: 'docs/a' }] });
+  await new DocumentService(h.db, 's', { storage: h.storage }).purgeExpired();
+
+  const update = h.queries.find((t) => t.includes('UPDATE documents'))!;
+  assert.match(update, /title = '\(deleted\)'/);
+  assert.match(update, /purged_at = now\(\)/);
+  assert.match(update, /purged_at IS NULL/, 'and the update is idempotent');
+});
+
+test('with no object storage the purge does nothing rather than half of it', async () => {
+  // Marking rows purged when there is no bucket to delete from would record a
+  // destruction that never happened.
+  const { DocumentService } = await import('../src/modules/documents/service.js');
+  const h = purgeHarness({ due: [{ id: 'd1', storage_key: 'docs/a' }] });
+  const out = await new DocumentService(h.db, 's').purgeExpired();
+  assert.deepEqual(out, { purged: 0, failed: 0 });
+  assert.deepEqual(h.updates, []);
 });

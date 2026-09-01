@@ -20,7 +20,9 @@ $$;
 -- ── fixtures ────────────────────────────────────────────────────────────────
 
 INSERT INTO users (id, email, password_hash, email_verified_at)
-VALUES ('aaaaaaaa-1111-4111-8111-111111111111', 'owner@example.test', 'x', now());
+VALUES ('aaaaaaaa-1111-4111-8111-111111111111', 'owner@example.test', 'x', now()),
+       -- Sections 7 and 8 need an owner that section 6 does not delete.
+       ('bbbbbbbb-9999-4999-8999-999999999999', 'logged@example.test', 'x', now());
 
 INSERT INTO properties (id, address_line, address_norm, city, province)
 VALUES ('bbbbbbbb-1111-4111-8111-111111111111', '2100 Victoria Ave',
@@ -248,6 +250,46 @@ BEGIN
 END;
 $$;
 
+-- ── 5d. what the retention purge must find ─────────────────────────────────
+-- Two categories, and the second was the bug: remove() soft-deletes and its
+-- comment promised "the retention job purges the bytes", while the query
+-- filtered `deleted_at IS NULL` — so an owner-deleted document was never
+-- collected and its bytes stayed in the bucket indefinitely.
+
+INSERT INTO documents (id, owner_id, title, kind, storage_key, mime, bytes,
+                       content_hash, retention_until, status, deleted_at)
+VALUES ('ffffffff-3333-4333-8333-333333333333', 'aaaaaaaa-1111-4111-8111-111111111111',
+        'Past its retention date', 'other', 'docs/expired', 'application/pdf', 1,
+        sha256('a'::bytea), now() - interval '1 day', 'stored', NULL),
+       ('ffffffff-4444-4444-8444-444444444444', 'aaaaaaaa-1111-4111-8111-111111111111',
+        'Deleted by its owner', 'other', 'docs/removed', 'application/pdf', 1,
+        sha256('b'::bytea), now() + interval '365 days', 'stored', now()),
+       ('ffffffff-5555-4555-8555-555555555555', 'aaaaaaaa-1111-4111-8111-111111111111',
+        'Still wanted', 'other', 'docs/live', 'application/pdf', 1,
+        sha256('c'::bytea), now() + interval '365 days', 'stored', NULL);
+
+DO $$
+DECLARE n integer;
+BEGIN
+  SELECT count(*) INTO n FROM documents
+   WHERE purged_at IS NULL
+     AND (retention_until <= now() OR deleted_at IS NOT NULL)
+     AND owner_id = 'aaaaaaaa-1111-4111-8111-111111111111';
+  PERFORM assert(n = 2,
+    'both an expired document AND one its owner deleted must be candidates, got ' || n);
+
+  -- Purging is idempotent: a row that has been done is never a candidate again.
+  UPDATE documents SET purged_at = now(), title = '(deleted)'
+   WHERE id = 'ffffffff-3333-4333-8333-333333333333';
+
+  SELECT count(*) INTO n FROM documents
+   WHERE purged_at IS NULL
+     AND (retention_until <= now() OR deleted_at IS NOT NULL)
+     AND owner_id = 'aaaaaaaa-1111-4111-8111-111111111111';
+  PERFORM assert(n = 1, 'a purged row must not be collected again, got ' || n);
+END;
+$$;
+
 -- ── 6. deleting a user takes their uploads with them ───────────────────────
 -- PIPEDA: an account deletion that leaves upload records behind has not
 -- deleted the account.
@@ -260,6 +302,68 @@ BEGIN
   SELECT count(*) INTO n FROM uploads
    WHERE owner_id = 'aaaaaaaa-1111-4111-8111-111111111111';
   PERFORM assert(n = 0, 'uploads must cascade with the user, ' || n || ' left');
+END;
+$$;
+
+-- ── 7. the access log outlives the purge, and cannot be erased ────────────
+-- This is why a purged document is blanked rather than deleted: the log
+-- references it and carries a forbid_mutation trigger, so a cascade delete
+-- would be refused. An access trail you can erase is not one.
+
+INSERT INTO documents (id, owner_id, title, kind, storage_key, mime, bytes,
+                       content_hash, retention_until, status)
+VALUES ('ffffffff-6666-4666-8666-666666666666', 'bbbbbbbb-9999-4999-8999-999999999999',
+        'Logged', 'other', 'docs/logged', 'application/pdf', 1,
+        sha256('d'::bytea), now() + interval '365 days', 'stored');
+
+INSERT INTO document_access_log (document_id, actor_id, action)
+VALUES ('ffffffff-6666-4666-8666-666666666666',
+        'bbbbbbbb-9999-4999-8999-999999999999', 'upload');
+
+DO $$
+DECLARE raised boolean := false; n integer;
+BEGIN
+  BEGIN
+    DELETE FROM document_access_log
+     WHERE document_id = 'ffffffff-6666-4666-8666-666666666666';
+  EXCEPTION WHEN OTHERS THEN raised := true;
+  END;
+  PERFORM assert(raised, 'the access log must refuse deletion');
+
+  SELECT count(*) INTO n FROM document_access_log
+   WHERE document_id = 'ffffffff-6666-4666-8666-666666666666';
+  PERFORM assert(n = 1, 'and the entry must survive a purge of the document');
+END;
+$$;
+
+-- ── 8. KNOWN GAP: an account with a logged document cannot be deleted ──────
+--
+-- Two rules that are each correct and collide. `documents.owner_id` cascades
+-- from `users`, and `document_access_log.document_id` cascades from
+-- `documents` — but that log is append-only at the database level, so the
+-- cascade is refused and the user delete fails outright.
+--
+-- The consequence is that the PIPEDA erasure path does not work for anyone who
+-- ever uploaded a document and opened it. Section 6 above passes only because
+-- its fixture has no log rows; the moment one exists, deletion stops.
+--
+-- This asserts the CURRENT behaviour so the gap is visible and tested rather
+-- than latent. It is not an endorsement: resolving it needs a decision about
+-- whether the trail survives an account deletion in pseudonymised form (likely
+-- right — it records staff and third-party access, not only the owner's) or
+-- whether the trigger should permit a cascade. When that decision is made,
+-- THIS ASSERTION WILL FAIL, which is the intended way to be reminded.
+
+DO $$
+DECLARE refused boolean := false;
+BEGIN
+  BEGIN
+    DELETE FROM users WHERE id = 'bbbbbbbb-9999-4999-8999-999999999999';
+  EXCEPTION WHEN OTHERS THEN refused := true;
+  END;
+  PERFORM assert(refused,
+    'deleting a user with a logged document is currently refused — if this now '
+    || 'succeeds, the erasure gap has been fixed and this contract needs updating');
 END;
 $$;
 

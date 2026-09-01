@@ -1,7 +1,16 @@
 # Scheduled jobs on Vercel
 
-One job exists today: **saved-search alerts**. It is configured in
-`backend/examples/nextjs/vercel.json` and runs hourly.
+Three jobs exist today, all configured in
+`backend/examples/nextjs/vercel.json`:
+
+| Path | Schedule (UTC) | What it does |
+|---|---|---|
+| `/api/jobs/alerts` | `7 * * * *` — hourly | Sends saved-search alerts that are due |
+| `/api/jobs/expire-listings` | `20 8 * * *` — daily | Retires listings past their 90-day TTL |
+| `/api/jobs/purge-documents` | `40 8 * * *` — daily | Destroys documents past their retention date |
+
+All three share one secret and one shape: `GET` for the scheduler, `POST` for a
+manual run, and `404` for anything unauthenticated.
 
 Nothing in this repository can deploy or schedule anything, so this file is the
 set-up: what to configure, in what order, and how to tell whether it worked.
@@ -34,18 +43,11 @@ boot, so a too-short secret fails at deploy time rather than at 3am.
 
 ---
 
-## 2. Confirm the schedule
+## 2. Confirm the schedules
 
 `backend/examples/nextjs/vercel.json`:
 
-```json
-{
-  "crons": [{ "path": "/api/jobs/alerts", "schedule": "7 * * * *" }],
-  "functions": { "app/api/jobs/alerts/route.ts": { "maxDuration": 60 } }
-}
-```
-
-**Hourly, at seven minutes past.** Hourly because the shortest alert frequency
+**Alerts: hourly, at seven minutes past.** Hourly because the shortest alert frequency
 a user can choose is `instant`, which the service treats as "at most once an
 hour" — a slower cron would make that setting a lie. Seven minutes past rather
 than on the hour because everything in the world is scheduled at `0 * * * *`,
@@ -61,8 +63,22 @@ matter for any future job that should fire at a local time, and 07:00 in Regina
 is 13:00 UTC in summer and 13:00 UTC in winter (Saskatchewan does not observe
 DST, which for once makes this easy).
 
+**Expiry and purge: daily, at 08:20 and 08:40 UTC** — roughly 2:20am and
+2:40am in Regina, which does not observe DST, so those times do not drift.
+Neither job needs to be prompt to the minute; both need to happen every day.
+They are twenty minutes apart rather than together so that a slow purge cannot
+delay the expiry, and so the two are separable in a log.
+
 On the Pro plan a cron fires **within** its minute, not at an exact second.
 Nothing here depends on precision.
+
+### Why expiry and purge are separate jobs
+
+They fail differently. Expiry is one indexed `UPDATE` and either works or does
+not. The purge talks to object storage per document, tolerates individual
+failures, and reports them. Running them together would mean one bucket
+timeout delaying every listing expiry by a day, and one status code covering
+two unrelated outcomes.
 
 ### `maxDuration` and the batch size are one decision
 
@@ -108,6 +124,11 @@ Expect `200` and a body like `{"considered":3,"sent":1}`:
   usually correct: a search with no new matches sends nothing, because "0 new
   listings match your search" is a commercial message about nothing.
 
+The other two answer `{"expired":7}` and `{"purged":3,"failed":1}`. A non-zero
+`failed` on the purge means object storage refused a delete; those documents
+stay unpurged and are retried on the next run, which is the safe direction — a
+row is only marked purged after its bytes are actually gone.
+
 **Check the refusals too**, because they are what protects the endpoint:
 
 ```
@@ -150,7 +171,26 @@ variables apply from the next build).
    needs more than the default duration.
 4. Reuse the same `CRON_SECRET` check. Do not invent a second scheme.
 
-Two obvious candidates already exist as unwired service methods:
-`ListingService.expireStale()` (the 90-day listing TTL) and
-`DocumentService.collectExpired()` (PIPEDA retention deletion). Both are
-written and tested; neither has anything calling it.
+A test asserts that every `/api/jobs/*` GET route appears in `vercel.json`. A
+job endpoint nobody schedules is a method that exists, is tested, is reachable
+and never runs — which is exactly the state `expireStale` and `collectExpired`
+were in, and it looks identical to one that works.
+
+---
+
+## Known gap: erasure vs the access log
+
+Deleting a **user** who has ever uploaded a document *and opened it* currently
+fails. `documents` cascades from `users`, `document_access_log` cascades from
+`documents`, and that log is append-only at the database level — so the cascade
+is refused and the whole delete aborts.
+
+This is asserted in `test/sql/uploads.sql` §8 so it is visible rather than
+latent. It is not resolved here, because resolving it is a decision rather than
+a fix: either the trail survives an account deletion in pseudonymised form
+(likely right — it records staff and third-party access, not only the owner's),
+or the trigger is relaxed to permit a cascade. When that decision is made, the
+assertion fails, which is the intended way to be reminded.
+
+Note that the **document** purge above is unaffected: it blanks rows rather
+than deleting them, precisely because of this constraint.

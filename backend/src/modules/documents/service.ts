@@ -72,9 +72,10 @@ export interface UploadTicket {
   expiresAt: number;
 }
 
-/** Turns a stored key into a short-lived URL the browser may GET. */
+/** What the locker needs from object storage: a read URL, and destruction. */
 export interface DocumentStorage {
   presignGet(key: string, opts: { expiresIn: number }): string;
+  delete(key: string): Promise<void>;
 }
 
 export class DocumentService {
@@ -324,17 +325,80 @@ export class DocumentService {
   }
 
   /**
-   * Retention sweep, run by the scheduler. Returns the storage keys whose
-   * bytes must now be destroyed in object storage.
+   * Documents whose bytes should no longer exist.
+   *
+   * TWO CATEGORIES, and the second was missing. `retention_until <= now()` is
+   * the PIPEDA one: the purpose has expired. But `remove()` soft-deletes and
+   * its comment promises "the retention job purges the bytes" — and this
+   * query used to filter `deleted_at IS NULL`, so a document the OWNER
+   * deleted was never collected and its bytes stayed in the bucket forever.
+   * The comment described the opposite of what the code did.
+   *
+   * Returns the id as well as the key, because purging has to record itself
+   * against the row or the job re-reads the same documents every night.
    */
-  async collectExpired(limit = 500): Promise<string[]> {
-    const res = await this.#db.query<{ storage_key: string }>(
-      `SELECT storage_key FROM documents
-        WHERE deleted_at IS NULL AND retention_until <= now()
+  async collectExpired(limit = 500): Promise<Array<{ id: string; storageKey: string }>> {
+    const res = await this.#db.query<{ id: string; storage_key: string }>(
+      `SELECT id, storage_key FROM documents
+        WHERE purged_at IS NULL
+          AND (retention_until <= now() OR deleted_at IS NOT NULL)
+        ORDER BY retention_until
         LIMIT $1`,
-      [limit],
+      [Math.min(Math.max(limit, 1), 1000)],
     );
-    return res.rows.map((r) => r.storage_key);
+    return res.rows.map((r) => ({ id: r.id, storageKey: r.storage_key }));
+  }
+
+  /**
+   * Destroys the bytes, then records that it happened.
+   *
+   * THE ORDER IS THE WHOLE DESIGN. Bytes first, row second:
+   *
+   *   - bytes then row: a crash between them leaves a row still marked
+   *     unpurged pointing at an object that is already gone. The next run
+   *     retries, the storage delete is idempotent (a 404 is success), and the
+   *     row is marked. Self-healing.
+   *   - row then bytes: a crash between them leaves an object nothing points
+   *     at and nothing will ever look for again. Unrecoverable garbage, and
+   *     under PIPEDA it is undeleted personal information that the system
+   *     believes it has deleted — the worst of the two failures by far.
+   *
+   * The row survives because document_access_log references it and is
+   * append-only. What is blanked is what is personal: the title is
+   * user-entered and is frequently the most sensitive field in the record
+   * ("Eviction notice — 2100 Victoria Ave"). The id, the timestamps and the
+   * key stay, so the access log still resolves and the destruction is
+   * auditable.
+   *
+   * One failure does not stop the run. A single unreachable object should not
+   * hold up the retention of every document behind it.
+   */
+  async purgeExpired(limit = 500): Promise<{ purged: number; failed: number }> {
+    if (!this.#storage) return { purged: 0, failed: 0 };
+
+    const due = await this.collectExpired(limit);
+    let purged = 0;
+    let failed = 0;
+
+    for (const doc of due) {
+      try {
+        await this.#storage.delete(doc.storageKey);
+      } catch {
+        failed += 1;
+        continue;
+      }
+      await this.#db.query(
+        `UPDATE documents
+            SET purged_at = now(),
+                deleted_at = COALESCE(deleted_at, now()),
+                title = '(deleted)'
+          WHERE id = $1 AND purged_at IS NULL`,
+        [doc.id],
+      );
+      purged += 1;
+    }
+
+    return { purged, failed };
   }
 }
 

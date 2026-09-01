@@ -717,6 +717,27 @@ test('the cron config points at a path the router actually serves', async () => 
   }
 });
 
+test('every job route is actually scheduled', async () => {
+  // The reverse of the check above, and the one that matters more. A job
+  // endpoint nobody schedules is a method that exists, is tested, is
+  // reachable, and never runs — which is exactly the state expireStale and
+  // collectExpired were in before this. A route registered and forgotten
+  // looks identical to a route that works.
+  const { readFile } = await import('node:fs/promises');
+  const routes = await readFile(new URL('../src/index.ts', import.meta.url).pathname, 'utf8');
+  const cfg = JSON.parse(await readFile(
+    new URL('../examples/nextjs/vercel.json', import.meta.url).pathname, 'utf8',
+  )) as { crons: Array<{ path: string }> };
+
+  const scheduled = new Set(cfg.crons.map((c) => c.path));
+  const jobPaths = [...routes.matchAll(/route\('GET', '(\/api\/jobs\/[^']+)'/g)]
+    .map((m) => m[1]!);
+
+  assert.ok(jobPaths.length >= 3, `expected several job routes, saw ${jobPaths.length}`);
+  const unscheduled = jobPaths.filter((p) => !scheduled.has(p));
+  assert.deepEqual(unscheduled, [], `job routes nothing ever calls: ${unscheduled.join(', ')}`);
+});
+
 test('the cron runs often enough for the shortest alert frequency it promises', async () => {
   // `instant` is offered in the UI and means "at most once an hour" in the
   // service. A daily cron would make that setting a lie — the kind that is
@@ -735,4 +756,50 @@ test('the cron runs often enough for the shortest alert frequency it promises', 
   assert.equal(shortest, 1, 'the shortest frequency is hourly');
   assert.equal(hour, '*', `the schedule must run every hour, got "${alerts!.schedule}"`);
   assert.match(minute!, /^\d+$/, 'and once within that hour, at a fixed minute');
+});
+
+test('every job endpoint is behind the same secret, with no exceptions', async () => {
+  // Three jobs now, and the third one somebody adds is the one that forgets
+  // the gate. Checked as a set rather than one by one.
+  const jobs = await import('../src/http/routes/jobs.js');
+  const app = {
+    env: {},
+    savedSearches: { async runAlerts() { return { considered: 0, sent: 0 }; } },
+    listings: { async expireStale() { return 0; } },
+    documents: { async purgeExpired() { return { purged: 0, failed: 0 }; } },
+  } as never;
+
+  const handlers = Object.entries(jobs).filter(([, v]) => typeof v === 'function');
+  assert.ok(handlers.length >= 3, `expected several job handlers, saw ${handlers.length}`);
+
+  for (const [name, handler] of handlers) {
+    const res = await (handler as (r: Request, a: unknown) => Promise<Response>)(
+      new Request('https://portage.ca/api/jobs/x', {
+        headers: { authorization: 'Bearer guess' },
+      }),
+      app,
+    );
+    assert.equal(res.status, 404, `${name} accepted a wrong secret`);
+  }
+});
+
+test('every scheduled job reports what it did', async () => {
+  // A scheduler dashboard records a status code and nothing else. "It ran"
+  // and "it did something" are different questions, and the second one is
+  // the one asked when a listing is still live six months later.
+  const { expireListings, purgeDocuments } = await import('../src/http/routes/jobs.js');
+  const secret = 'a-long-enough-cron-secret-value';
+  const app = {
+    env: { cronSecret: secret },
+    cfg: { allowedOrigins: [] },
+    hsts: false,
+    listings: { async expireStale(limit: number) { assert.ok(limit > 0); return 7; } },
+    documents: { async purgeExpired() { return { purged: 3, failed: 1 }; } },
+  } as never;
+  const req = () => new Request('https://portage.ca/api/jobs/x', {
+    headers: { authorization: `Bearer ${secret}` },
+  });
+
+  assert.deepEqual(await (await expireListings(req(), app)).json(), { expired: 7 });
+  assert.deepEqual(await (await purgeDocuments(req(), app)).json(), { purged: 3, failed: 1 });
 });

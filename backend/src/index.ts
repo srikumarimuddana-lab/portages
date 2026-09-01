@@ -59,7 +59,7 @@ import {
   forgotPasswordAction, resetPasswordAction,
   decideListingAction, decideMessageAction, dismissQueueAction, setFlagAction,
 } from './web/actions.js';
-import { runAlerts } from './http/routes/jobs.js';
+import { runAlerts, expireListings, purgeDocuments } from './http/routes/jobs.js';
 import { preflight } from './http/respond.js';
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response>;
@@ -142,6 +142,10 @@ async function buildRoutes(): Promise<void> {
   // Guarded by a shared secret either way, not by being unlinked.
   route('GET', '/api/jobs/alerts', (req) => runAlerts(req, app));
   route('POST', '/api/jobs/alerts', (req) => runAlerts(req, app));
+  route('GET', '/api/jobs/expire-listings', (req) => expireListings(req, app));
+  route('POST', '/api/jobs/expire-listings', (req) => expireListings(req, app));
+  route('GET', '/api/jobs/purge-documents', (req) => purgeDocuments(req, app));
+  route('POST', '/api/jobs/purge-documents', (req) => purgeDocuments(req, app));
   route('POST', '/api/uploads/preview', (req) => recordPreview(req, uploadDeps));
 
   // Admin. Every one of these answers 404 to a caller without the role.
